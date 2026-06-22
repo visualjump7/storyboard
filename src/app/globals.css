@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Single source of truth for the accent color. */
+  --accent: #ff4800;
+  --accent-rgb: 255 72 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0c0c0e;
+  color: #e8e8ea;
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Scrollbars (match the design) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #34343c;
+  border-radius: 8px;
+  border: 2px solid #0c0c0e;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+textarea::placeholder,
+input::placeholder {
+  color: #5a5a63;
+}
+
+/* Range slider uses the accent color */
+input[type='range'] {
+  accent-color: var(--accent);
+}
