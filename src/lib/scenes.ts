@@ -2,26 +2,32 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Scene, SceneTextFields } from './types';
 import { removeObjects, removeSceneFolder, uploadImage } from './storage';
 
-/** Fetch all of the current user's scenes in display order. */
-export async function fetchScenes(supabase: SupabaseClient): Promise<Scene[]> {
+/** Fetch a project's scenes in display order. */
+export async function fetchScenes(
+  supabase: SupabaseClient,
+  projectId: string,
+): Promise<Scene[]> {
   const { data, error } = await supabase
     .from('scenes')
     .select('*')
+    .eq('project_id', projectId)
     .order('order_index', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Scene[];
 }
 
-/** Create a new empty scene at the end of the board. */
+/** Create a new empty scene at the end of a project's board. */
 export async function createScene(
   supabase: SupabaseClient,
   userId: string,
+  projectId: string,
   orderIndex: number,
 ): Promise<Scene> {
   const { data, error } = await supabase
     .from('scenes')
     .insert({
       user_id: userId,
+      project_id: projectId,
       order_index: orderIndex,
       name: '',
       description: '',
@@ -59,6 +65,7 @@ export async function persistOrder(supabase: SupabaseClient, ordered: Scene[]): 
   const rows = ordered.map((scene, i) => ({
     id: scene.id,
     user_id: scene.user_id,
+    project_id: scene.project_id,
     order_index: i,
   }));
   const { error } = await supabase.from('scenes').upsert(rows, { onConflict: 'id' });

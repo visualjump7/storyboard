@@ -9,17 +9,20 @@ import { ChevronRight } from './icons';
 type ScriptPanelProps = {
   supabase: SupabaseClient;
   userId: string;
+  projectId: string;
   onClose: () => void;
 };
 
-export function ScriptPanel({ supabase, userId, onClose }: ScriptPanelProps) {
+export function ScriptPanel({ supabase, userId, projectId, onClose }: ScriptPanelProps) {
   // null while loading, so we never overwrite stored text with an empty string.
   const [text, setText] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     let active = true;
-    fetchScript(supabase)
+    setText(null);
+    setDirty(false);
+    fetchScript(supabase, projectId)
       .then((content) => {
         if (active) setText(content);
       })
@@ -29,11 +32,11 @@ export function ScriptPanel({ supabase, userId, onClose }: ScriptPanelProps) {
     return () => {
       active = false;
     };
-  }, [supabase]);
+  }, [supabase, projectId]);
 
   useDebouncedSave(
     text ?? '',
-    (value) => void saveScript(supabase, userId, value),
+    (value) => void saveScript(supabase, userId, projectId, value),
     400,
     dirty && text !== null,
   );

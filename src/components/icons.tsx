@@ -90,6 +90,23 @@ export function Close({ size = 16, className }: IconProps) {
   );
 }
 
+export function ChevronDown({ size = 16, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className}>
+      <path d="M6 9l6 6 6-6" />
+    </Stroke>
+  );
+}
+
+export function Pencil({ size = 13, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className} strokeWidth={1.8}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
+    </Stroke>
+  );
+}
+
 export function ImagePlaceholder({ size = 26, className }: IconProps) {
   return (
     <Stroke size={size} className={className} strokeWidth={1.6}>
@@ -106,6 +123,16 @@ export function Upload({ size = 34, className, strokeWidth = 1.5 }: IconProps) {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <path d="M17 8l-5-5-5 5" />
       <path d="M12 3v12" />
+    </Stroke>
+  );
+}
+
+export function Download({ size = 13, className, strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Stroke size={size} className={className} strokeWidth={strokeWidth}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M12 15V3" />
     </Stroke>
   );
 }

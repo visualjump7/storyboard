@@ -1,6 +1,14 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+import Link from 'next/link';
+import type { Project } from '@/lib/types';
 import { GridIcon, Plus, ScriptLines, SignOut } from './icons';
+import { ProjectSwitcher } from './ProjectSwitcher';
 
 type ToolbarProps = {
+  supabase: SupabaseClient;
+  userId: string;
+  project: Project;
+  projects: Project[];
   sceneCount: number;
   cardSize: number;
   minSize: number;
@@ -13,6 +21,10 @@ type ToolbarProps = {
 };
 
 export function Toolbar({
+  supabase,
+  userId,
+  project,
+  projects,
   sceneCount,
   cardSize,
   minSize,
@@ -25,12 +37,16 @@ export function Toolbar({
 }: ToolbarProps) {
   return (
     <div className="z-10 flex h-[60px] flex-none items-center gap-5 border-b border-line bg-surface px-[22px]">
-      {/* Brand */}
-      <div className="flex items-center gap-[11px]">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-[14px] font-bold text-canvas">
+      {/* Brand + project switcher */}
+      <div className="flex items-center gap-2">
+        <Link
+          href="/"
+          aria-label="All projects"
+          className="flex h-6 w-6 flex-none items-center justify-center rounded-md bg-accent text-[14px] font-bold text-canvas"
+        >
           S
-        </div>
-        <span className="text-[15px] font-semibold tracking-[-0.01em]">Storyboard</span>
+        </Link>
+        <ProjectSwitcher supabase={supabase} userId={userId} project={project} projects={projects} />
         <span className="ml-0.5 text-[12.5px] text-muted">
           {sceneCount} {sceneCount === 1 ? 'scene' : 'scenes'}
         </span>

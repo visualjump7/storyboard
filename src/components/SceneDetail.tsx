@@ -15,6 +15,7 @@ type SceneDetailProps = {
   onSaveFields: (id: string, fields: SceneTextFields) => void;
   onUploadImage: (scene: Scene, file: File) => Promise<void>;
   onRemoveImage: (scene: Scene) => Promise<void>;
+  onDownloadImage: (scene: Scene) => Promise<void>;
   onDelete: (scene: Scene) => void;
 };
 
@@ -28,6 +29,7 @@ export function SceneDetail({
   onSaveFields,
   onUploadImage,
   onRemoveImage,
+  onDownloadImage,
   onDelete,
 }: SceneDetailProps) {
   // Keyboard: ← / → step scenes, Esc closes. Arrows are ignored while typing in
@@ -92,6 +94,7 @@ export function SceneDetail({
           onSaveFields={onSaveFields}
           onUploadImage={onUploadImage}
           onRemoveImage={onRemoveImage}
+          onDownloadImage={onDownloadImage}
           onDelete={onDelete}
         />
       </div>

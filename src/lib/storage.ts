@@ -94,3 +94,22 @@ export async function signImageUrls(
   });
   return map;
 }
+
+/**
+ * Mint a short-lived signed URL that forces a download (sets a
+ * `Content-Disposition: attachment` header) with the given filename, so the
+ * browser saves the file instead of navigating to it. Works for the private
+ * bucket without any CORS/blob handling.
+ */
+export async function signImageDownloadUrl(
+  supabase: SupabaseClient,
+  path: string,
+  filename: string,
+  expiresInSeconds = 60,
+): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(SCENE_IMAGES_BUCKET)
+    .createSignedUrl(path, expiresInSeconds, { download: filename });
+  if (error) throw error;
+  return data.signedUrl;
+}

@@ -14,7 +14,9 @@ import {
   setSceneImage,
   updateSceneFields,
 } from '@/lib/scenes';
-import type { Scene, SceneTextFields } from '@/lib/types';
+import { fetchProjects } from '@/lib/projects';
+import { signImageDownloadUrl } from '@/lib/storage';
+import type { Project, Scene, SceneTextFields } from '@/lib/types';
 import { Grid } from './Grid';
 import { SceneDetail } from './SceneDetail';
 import { ScriptPanel } from './ScriptPanel';
@@ -26,28 +28,47 @@ const DEFAULT_SIZE = 268;
 
 type StoryboardProps = {
   userId: string;
+  project: Project;
 };
 
-export function Storyboard({ userId }: StoryboardProps) {
+export function Storyboard({ userId, project }: StoryboardProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
   const [scenes, setScenes] = useState<Scene[] | null>(null); // null = loading
+  const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const [cardSize, setCardSize] = useLocalStorage('storyboard:cardSize', DEFAULT_SIZE);
   const [scriptOpen, setScriptOpen] = useLocalStorage('storyboard:scriptOpen', false);
 
-  // Initial fetch
+  // Load this project's scenes (re-runs if you switch to another project).
   useEffect(() => {
     let active = true;
-    fetchScenes(supabase)
+    setScenes(null);
+    setDetailId(null);
+    fetchScenes(supabase, project.id)
       .then((rows) => {
         if (active) setScenes(rows);
       })
       .catch((e) => {
         if (active) setError(e?.message ?? 'Failed to load scenes.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [supabase, project.id]);
+
+  // Load the project list for the switcher dropdown.
+  useEffect(() => {
+    let active = true;
+    fetchProjects(supabase)
+      .then((p) => {
+        if (active) setProjects(p);
+      })
+      .catch(() => {
+        // Non-fatal: the switcher falls back to just the current project.
       });
     return () => {
       active = false;
@@ -61,12 +82,12 @@ export function Storyboard({ userId }: StoryboardProps) {
 
   const handleAddScene = useCallback(async () => {
     try {
-      const created = await createScene(supabase, userId, list.length);
+      const created = await createScene(supabase, userId, project.id, list.length);
       setScenes((prev) => [...(prev ?? []), created]);
     } catch (e) {
       setError((e as Error)?.message ?? 'Failed to add scene.');
     }
-  }, [supabase, userId, list.length]);
+  }, [supabase, userId, project.id, list.length]);
 
   const handleReorder = useCallback(
     (ordered: Scene[]) => {
@@ -112,6 +133,32 @@ export function Storyboard({ userId }: StoryboardProps) {
         );
       } catch (e) {
         setError((e as Error)?.message ?? 'Failed to remove image.');
+      }
+    },
+    [supabase],
+  );
+
+  const handleDownloadImage = useCallback(
+    async (scene: Scene) => {
+      if (!scene.image_path) return;
+      try {
+        const ext = scene.image_path.split('.').pop() || 'png';
+        const slug =
+          (scene.name || 'scene')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '') || 'scene';
+        const url = await signImageDownloadUrl(supabase, scene.image_path, `${slug}.${ext}`);
+        // Anchor click with an attachment Content-Disposition downloads without
+        // navigating the page away.
+        const a = document.createElement('a');
+        a.href = url;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (e) {
+        setError((e as Error)?.message ?? 'Failed to download image.');
       }
     },
     [supabase],
@@ -166,6 +213,10 @@ export function Storyboard({ userId }: StoryboardProps) {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-canvas font-sans text-ink">
       <Toolbar
+        supabase={supabase}
+        userId={userId}
+        project={project}
+        projects={projects}
         sceneCount={list.length}
         cardSize={cardSize}
         minSize={MIN_SIZE}
@@ -206,7 +257,12 @@ export function Storyboard({ userId }: StoryboardProps) {
           />
         )}
         {scriptOpen && (
-          <ScriptPanel supabase={supabase} userId={userId} onClose={toggleScript} />
+          <ScriptPanel
+            supabase={supabase}
+            userId={userId}
+            projectId={project.id}
+            onClose={toggleScript}
+          />
         )}
       </div>
 
@@ -221,6 +277,7 @@ export function Storyboard({ userId }: StoryboardProps) {
           onSaveFields={handleSaveFields}
           onUploadImage={handleUploadImage}
           onRemoveImage={handleRemoveImage}
+          onDownloadImage={handleDownloadImage}
           onDelete={handleDelete}
         />
       )}

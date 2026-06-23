@@ -2,14 +2,50 @@
 -- Storyboard — database schema, Row Level Security, and Storage policies.
 -- Paste this whole file into the Supabase SQL editor and run it.
 -- Safe to re-run (uses IF NOT EXISTS / DROP POLICY IF EXISTS).
+--
+-- This is the CURRENT (multi-project) schema for a FRESH project. To upgrade an
+-- existing single-board database, run supabase/migrations/0001_multi_project.sql
+-- instead — it preserves existing data.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- scenes
+-- projects (a user can have many; each owns its own scenes + script)
+-- ---------------------------------------------------------------------------
+create table if not exists public.projects (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  name        text not null default 'Untitled project',
+  description text not null default '',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create index if not exists projects_user_idx
+  on public.projects (user_id, created_at);
+
+alter table public.projects enable row level security;
+
+drop policy if exists "projects_select_own" on public.projects;
+drop policy if exists "projects_insert_own" on public.projects;
+drop policy if exists "projects_update_own" on public.projects;
+drop policy if exists "projects_delete_own" on public.projects;
+
+create policy "projects_select_own" on public.projects
+  for select using (auth.uid() = user_id);
+create policy "projects_insert_own" on public.projects
+  for insert with check (auth.uid() = user_id);
+create policy "projects_update_own" on public.projects
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "projects_delete_own" on public.projects
+  for delete using (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------------------
+-- scenes (belong to a project; ordering is per-project)
 -- ---------------------------------------------------------------------------
 create table if not exists public.scenes (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users (id) on delete cascade,
+  project_id  uuid not null references public.projects (id) on delete cascade,
   order_index int  not null default 0,
   name        text not null default '',
   description text not null default '',
@@ -19,8 +55,8 @@ create table if not exists public.scenes (
   updated_at  timestamptz not null default now()
 );
 
-create index if not exists scenes_user_order_idx
-  on public.scenes (user_id, order_index);
+create index if not exists scenes_project_order_idx
+  on public.scenes (project_id, order_index);
 
 alter table public.scenes enable row level security;
 
@@ -39,15 +75,18 @@ create policy "scenes_delete_own" on public.scenes
   for delete using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
--- script (one row per user)
+-- script (one row PER PROJECT)
 -- ---------------------------------------------------------------------------
 create table if not exists public.script (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null references auth.users (id) on delete cascade,
+  project_id uuid not null references public.projects (id) on delete cascade,
   content    text not null default '',
-  updated_at timestamptz not null default now(),
-  unique (user_id)                          -- enables upsert on user_id
+  updated_at timestamptz not null default now()
 );
+
+create unique index if not exists script_project_id_key
+  on public.script (project_id);             -- enables upsert on project_id
 
 alter table public.script enable row level security;
 
@@ -73,6 +112,10 @@ create policy "script_delete_own" on public.script
 -- the privacy guarantee can't drift from a manual dashboard toggle.
 -- (If your project blocks writing to storage.buckets from the SQL editor,
 -- create a bucket named "scene-images" with Public OFF in the dashboard.)
+--
+-- Object paths stay "{user_id}/{scene_id}/{uuid}.{ext}" — scene ids are globally
+-- unique, so projects need no path segment and no images ever move between
+-- projects. RLS still scopes by the first segment (user_id).
 -- ---------------------------------------------------------------------------
 insert into storage.buckets (id, name, public)
 values ('scene-images', 'scene-images', false)

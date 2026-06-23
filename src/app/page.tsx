@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { Storyboard } from '@/components/Storyboard';
+import { ProjectsHome } from '@/components/ProjectsHome';
+import { fetchProjects } from '@/lib/projects';
 import { createClient } from '@/lib/supabase/server';
 
 // Reads cookies for auth, so it must render per-request (never prerendered).
@@ -13,5 +14,6 @@ export default async function Page() {
 
   if (!user) redirect('/login');
 
-  return <Storyboard userId={user.id} />;
+  const projects = await fetchProjects(supabase);
+  return <ProjectsHome userId={user.id} initialProjects={projects} />;
 }

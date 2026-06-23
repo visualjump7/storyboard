@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import type { Scene, SceneTextFields } from '@/lib/types';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
-import { Spinner, Trash, Upload } from './icons';
+import { Download, Spinner, Trash, Upload } from './icons';
 
 type SceneEditorProps = {
   /** The live scene. Keyed by scene.id by the parent, so navigating to another
@@ -13,6 +13,7 @@ type SceneEditorProps = {
   onSaveFields: (id: string, fields: SceneTextFields) => void;
   onUploadImage: (scene: Scene, file: File) => Promise<void>;
   onRemoveImage: (scene: Scene) => Promise<void>;
+  onDownloadImage: (scene: Scene) => Promise<void>;
   onDelete: (scene: Scene) => void;
 };
 
@@ -22,10 +23,12 @@ export function SceneEditor({
   onSaveFields,
   onUploadImage,
   onRemoveImage,
+  onDownloadImage,
   onDelete,
 }: SceneEditorProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const [form, setForm] = useState<SceneTextFields>(() => ({
     name: scene.name,
@@ -61,6 +64,15 @@ export function SceneEditor({
       await onRemoveImage(scene);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleDownload() {
+    setDownloading(true);
+    try {
+      await onDownloadImage(scene);
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -107,6 +119,22 @@ export function SceneEditor({
               className="absolute inset-0 h-full w-full object-cover"
             />
             <div className="absolute bottom-2.5 right-2.5 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleDownload();
+                }}
+                disabled={downloading}
+                className="flex h-7 items-center gap-1.5 rounded-lg border border-[#34343c] bg-[rgba(12,12,14,0.78)] px-[11px] text-[11.5px] text-[#d0d0d6] backdrop-blur transition-colors hover:text-white disabled:opacity-60"
+              >
+                {downloading ? (
+                  <Spinner size={13} className="animate-spin" />
+                ) : (
+                  <Download size={13} strokeWidth={1.8} />
+                )}
+                Download
+              </button>
               <button
                 type="button"
                 onClick={(e) => {
