@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { MediaKind } from './types';
 import { SCENE_IMAGES_BUCKET } from './types';
 import { uid } from './uid';
 
@@ -10,11 +11,24 @@ const EXT_FROM_MIME: Record<string, string> = {
   'image/gif': 'gif',
   'image/avif': 'avif',
   'image/svg+xml': 'svg',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'video/x-m4v': 'm4v',
 };
+
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v']);
 
 function extFor(file: File): string {
   const fromName = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : '';
   return EXT_FROM_MIME[file.type] ?? (fromName || 'bin');
+}
+
+/** Classify a picked file as image or video (mime first, extension fallback). */
+export function mediaKindFor(file: File): MediaKind {
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type.startsWith('image/')) return 'image';
+  return VIDEO_EXTS.has(extFor(file)) ? 'video' : 'image';
 }
 
 /**
@@ -33,6 +47,20 @@ export async function uploadImage(
     .upload(path, file, { contentType: file.type, upsert: false });
   if (error) throw error;
   return path;
+}
+
+/**
+ * Upload any media file (image or video) to a scene/post's folder. Same path
+ * convention as uploadImage — the name only differs to read honestly at post
+ * call sites now that the bucket holds videos too.
+ */
+export async function uploadMedia(
+  supabase: SupabaseClient,
+  userId: string,
+  sceneId: string,
+  file: File,
+): Promise<string> {
+  return uploadImage(supabase, userId, sceneId, file);
 }
 
 /** Remove one or more objects by path. Safe to call with an empty list. */

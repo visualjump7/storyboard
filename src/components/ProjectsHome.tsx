@@ -4,26 +4,31 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { createProject, deleteProject, renameProject } from '@/lib/projects';
-import type { Project } from '@/lib/types';
-import { Pencil, Plus, SignOut, Trash } from './icons';
+import { formatNextDate } from '@/lib/pipeline';
+import type { Project, ProjectKind } from '@/lib/types';
+import { GridIcon, Pencil, Plus, ScriptLines, SignOut, Trash } from './icons';
 
 type ProjectsHomeProps = {
   userId: string;
   initialProjects: Project[];
+  /** projectId -> ISO of the next upcoming scheduled post (social projects). */
+  nextScheduled?: Record<string, string>;
 };
 
-export function ProjectsHome({ userId, initialProjects }: ProjectsHomeProps) {
+export function ProjectsHome({ userId, initialProjects, nextScheduled = {} }: ProjectsHomeProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const [projects, setProjects] = useState<Project[]>(initialProjects);
   const [busy, setBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState<'header' | 'empty' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleNew() {
+  async function handleNew(kind: ProjectKind) {
+    setMenuOpen(null);
     setBusy(true);
     setError(null);
     try {
-      const p = await createProject(supabase, userId, 'Untitled project');
+      const p = await createProject(supabase, userId, 'Untitled project', kind);
       router.push(`/p/${p.id}`);
     } catch (e) {
       setError((e as Error)?.message ?? 'Failed to create project.');
@@ -44,10 +49,12 @@ export function ProjectsHome({ userId, initialProjects }: ProjectsHomeProps) {
   }
 
   async function handleDelete(p: Project) {
+    const what =
+      p.kind === 'social'
+        ? 'its posts, media, and notes'
+        : 'its scenes, images, and script';
     if (
-      !window.confirm(
-        `Delete "${p.name}"? This permanently deletes its scenes, images, and script. This cannot be undone.`,
-      )
+      !window.confirm(`Delete "${p.name}"? This permanently deletes ${what}. This cannot be undone.`)
     )
       return;
     setProjects((prev) => prev.filter((x) => x.id !== p.id));
@@ -102,35 +109,33 @@ export function ProjectsHome({ userId, initialProjects }: ProjectsHomeProps) {
           <h1 className="text-[19px] font-semibold tracking-[-0.01em]">
             Projects
             <span className="ml-2 text-[13px] font-normal text-muted">
-              {projects.length} {projects.length === 1 ? 'storyboard' : 'storyboards'}
+              {projects.length} {projects.length === 1 ? 'project' : 'projects'}
             </span>
           </h1>
-          <button
-            type="button"
-            onClick={handleNew}
-            disabled={busy}
-            className="flex h-[36px] items-center gap-[7px] rounded-lg bg-accent px-3.5 text-[13px] font-semibold text-canvas transition-opacity hover:opacity-90 disabled:opacity-60"
-          >
-            <Plus size={14} />
-            New project
-          </button>
+          <NewProjectButton
+            open={menuOpen === 'header'}
+            busy={busy}
+            onToggle={() => setMenuOpen((m) => (m === 'header' ? null : 'header'))}
+            onClose={() => setMenuOpen(null)}
+            onPick={handleNew}
+          />
         </div>
 
         {projects.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#303039] bg-well py-20 text-center">
             <div className="text-[14px] font-medium text-[#a6a6ae]">No projects yet</div>
             <div className="mt-1 text-[12.5px] text-muted">
-              Create your first storyboard to get started.
+              Create a storyboard or a social pipeline to get started.
             </div>
-            <button
-              type="button"
-              onClick={handleNew}
-              disabled={busy}
-              className="mt-4 flex h-[36px] items-center gap-[7px] rounded-lg bg-accent px-3.5 text-[13px] font-semibold text-canvas transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              <Plus size={14} />
-              New project
-            </button>
+            <div className="mt-4">
+              <NewProjectButton
+                open={menuOpen === 'empty'}
+                busy={busy}
+                onToggle={() => setMenuOpen((m) => (m === 'empty' ? null : 'empty'))}
+                onClose={() => setMenuOpen(null)}
+                onPick={handleNew}
+              />
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
@@ -172,15 +177,97 @@ export function ProjectsHome({ userId, initialProjects }: ProjectsHomeProps) {
                     <Trash size={12} />
                   </button>
                 </div>
+                <div className="mb-1.5">
+                  <span
+                    className={[
+                      'inline-flex h-[18px] items-center rounded px-1.5 text-[9.5px] font-semibold uppercase tracking-wide',
+                      p.kind === 'social'
+                        ? 'bg-accent/15 text-accent'
+                        : 'border border-line-2 bg-field text-muted',
+                    ].join(' ')}
+                  >
+                    {p.kind === 'social' ? 'Social' : 'Storyboard'}
+                  </span>
+                </div>
                 <div className="text-[15px] font-semibold tracking-[-0.01em] text-bright">{p.name}</div>
-                {p.description && (
-                  <div className="mt-1 line-clamp-2 text-[12px] text-muted">{p.description}</div>
+                {p.kind === 'social' && nextScheduled[p.id] ? (
+                  <div className="mt-1 text-[11.5px] text-muted">
+                    Next: {formatNextDate(nextScheduled[p.id])}
+                  </div>
+                ) : (
+                  p.description && (
+                    <div className="mt-1 line-clamp-2 text-[12px] text-muted">{p.description}</div>
+                  )
                 )}
               </div>
             ))}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function NewProjectButton({
+  open,
+  busy,
+  onToggle,
+  onClose,
+  onPick,
+}: {
+  open: boolean;
+  busy: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onPick: (kind: ProjectKind) => void;
+}) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={busy}
+        aria-expanded={open}
+        className="flex h-[36px] items-center gap-[7px] rounded-lg bg-accent px-3.5 text-[13px] font-semibold text-canvas transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        <Plus size={14} />
+        New project
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={onClose} />
+          <div className="absolute right-0 top-[42px] z-30 w-[260px] overflow-hidden rounded-xl border border-line bg-surface shadow-slideover">
+            <button
+              type="button"
+              onClick={() => onPick('storyboard')}
+              className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[#1a1a20]"
+            >
+              <GridIcon size={15} className="mt-0.5 flex-none text-muted" />
+              <span>
+                <span className="block text-[13.5px] font-medium text-bright">Storyboard</span>
+                <span className="mt-0.5 block text-[11.5px] leading-snug text-muted">
+                  Film scenes with prompts and frames
+                </span>
+              </span>
+            </button>
+            <div className="h-px bg-line" />
+            <button
+              type="button"
+              onClick={() => onPick('social')}
+              className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[#1a1a20]"
+            >
+              <ScriptLines size={15} className="mt-0.5 flex-none text-muted" />
+              <span>
+                <span className="block text-[13.5px] font-medium text-bright">Social pipeline</span>
+                <span className="mt-0.5 block text-[11.5px] leading-snug text-muted">
+                  Posts with copy, media, schedule, and status
+                </span>
+              </span>
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

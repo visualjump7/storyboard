@@ -2,8 +2,13 @@
 // sb — Storyboard agent CLI.
 //
 // A non-browser client into the same Supabase backend the web app uses, so
-// Claude (or you) can push projects, scenes, prompts, and images into the
-// storyboard from any machine that has this repo + a .env.local.
+// Claude (or you) can push projects, scenes, social posts, prompts, and media
+// into the app from any machine that has this repo + a .env.local.
+//
+// Projects come in two kinds: 'storyboard' (film scene boards — the original)
+// and 'social' (post pipelines: copy + multiple images/videos + schedule +
+// status + platforms). Social-only flags/commands error on storyboard
+// projects, and vice versa for --image.
 //
 // Usage:
 //   npm run sb -- <command> [args]      (note the `--` before args)
@@ -11,25 +16,33 @@
 //
 // Project commands:
 //   projects                              List your projects (● = current)
-//   project add <name…>                   Create a project and make it current
+//   project add <name…> [--social]        Create a project and make it current
 //   project use <project>                 Set the current project
 //   project rename <project> <name…>      Rename a project
-//   project rm <project>                  Delete a project (and all its scenes/images)
+//   project rm <project>                  Delete a project (and all its scenes/media)
 //
-// Scene commands (act on the current project; override with --project):
-//   list                                  Show the board
+// Scene/post commands (act on the current project; override with --project):
+//   list                                  Show the board / pipeline
 //   add [--name N] [--desc D] [--prompt P] [--image PATH|URL]
-//   set <scene> [--name N] [--desc D] [--prompt P]
-//   image <scene> <PATH|URL>              Upload/replace a scene's image
-//   rm <scene>                            Delete a scene and its stored images
-//   script get                            Print the screenplay text
-//   script set <PATH|->                   Replace the screenplay text (- reads stdin)
+//       [--copy TEXT] [--media PATH|URL]… [--schedule "YYYY-MM-DD[ HH:MM]"]
+//       [--platforms a,b,c] [--status S]
+//   set <scene> [--name N] [--desc D] [--prompt P] [--copy TEXT]
+//       [--schedule …|none] [--platforms …|none] [--status S]
+//   image <scene> <PATH|URL>              Upload/replace a storyboard scene's image
+//   media <post> [list]                   List a post's media
+//   media <post> add <PATH|URL>…          Append media (images/videos) to a post
+//   media <post> rm <n>                   Remove media item n (1-based)
+//   media <post> order 3,1,2              Reorder media (full permutation)
+//   share [--regenerate]                  Print the read-only share link
+//   rm <scene>                            Delete a scene/post and its stored media
+//   script get                            Print the script/notes text
+//   script set <PATH|->                   Replace the script/notes text (- reads stdin)
 //   help                                  Show this help
 //
 // <project> = 1-based index from `projects`, a name, a full UUID, or an id prefix.
-// <scene>   = 1-based index from `list`, a full UUID, or an id prefix.
+// <scene>/<post> = 1-based index from `list`, a full UUID, or an id prefix.
 // --project <project> scopes any scene command to a specific project for one run.
-// --image accepts a local file path OR an http(s) URL (downloaded then uploaded).
+// --image/--media accept a local file path OR an http(s) URL (downloaded then uploaded).
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { extname } from 'node:path';
@@ -153,7 +166,7 @@ async function clearCurrentProjectIf(id) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parseArgs(argv) {
+function parseArgs(argv, repeatable = new Set()) {
   const flags = {};
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
@@ -161,7 +174,14 @@ function parseArgs(argv) {
     if (a.startsWith('--')) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next === undefined || next.startsWith('--')) {
+      if (repeatable.has(key)) {
+        // Repeatable flags accumulate into an array and always need a value.
+        if (next === undefined || next.startsWith('--')) {
+          throw new Error(`--${key} requires a value.`);
+        }
+        (flags[key] ??= []).push(next);
+        i++;
+      } else if (next === undefined || next.startsWith('--')) {
         flags[key] = true;
       } else {
         flags[key] = next;
@@ -234,12 +254,12 @@ async function resolveActiveProject(flags) {
   );
 }
 
-async function createProject(name) {
-  const { data, error } = await db()
-    .from('projects')
-    .insert({ user_id: await ownerId(), name: (name || '').trim() || 'Untitled project' })
-    .select()
-    .single();
+async function createProject(name, kind = 'storyboard') {
+  const row = { user_id: await ownerId(), name: (name || '').trim() || 'Untitled project' };
+  // Only send kind when non-default so plain storyboard adds still work on a
+  // database that hasn't run the social-pipeline migration yet.
+  if (kind !== 'storyboard') row.kind = kind;
+  const { data, error } = await db().from('projects').insert(row).select().single();
   if (error) throw error;
   return data;
 }
@@ -281,6 +301,10 @@ const EXT_TO_CT = {
   webp: 'image/webp',
   gif: 'image/gif',
   avif: 'image/avif',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  m4v: 'video/x-m4v',
 };
 const CT_TO_EXT = {
   'image/png': 'png',
@@ -288,31 +312,62 @@ const CT_TO_EXT = {
   'image/webp': 'webp',
   'image/gif': 'gif',
   'image/avif': 'avif',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'video/x-m4v': 'm4v',
 };
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v']);
 
-async function loadImage(src) {
+async function loadMedia(src) {
+  let buffer;
+  let contentType;
+  let ext;
   if (/^https?:\/\//i.test(src)) {
     const res = await fetch(src);
-    if (!res.ok) throw new Error(`Failed to download image (${res.status} ${res.statusText})`);
+    if (!res.ok) throw new Error(`Failed to download media (${res.status} ${res.statusText})`);
     const ct = (res.headers.get('content-type') || '').split(';')[0].trim();
-    const buffer = Buffer.from(await res.arrayBuffer());
-    let ext = CT_TO_EXT[ct];
+    buffer = Buffer.from(await res.arrayBuffer());
+    ext = CT_TO_EXT[ct];
     if (!ext) ext = extname(new URL(src).pathname).slice(1).toLowerCase();
-    if (!ext) ext = 'png';
-    return { buffer, contentType: ct || EXT_TO_CT[ext] || 'application/octet-stream', ext };
+    if (!ext) {
+      console.error(`note: could not detect a type for ${src} — assuming png`);
+      ext = 'png';
+    }
+    contentType = ct || EXT_TO_CT[ext] || 'application/octet-stream';
+  } else {
+    buffer = await readFile(src);
+    ext = extname(src).slice(1).toLowerCase() || 'png';
+    contentType = EXT_TO_CT[ext] || 'application/octet-stream';
   }
-  const buffer = await readFile(src);
-  const ext = extname(src).slice(1).toLowerCase() || 'png';
-  return { buffer, contentType: EXT_TO_CT[ext] || 'application/octet-stream', ext };
+  const kind = contentType.startsWith('video/') || VIDEO_EXTS.has(ext) ? 'video' : 'image';
+  if (kind === 'video' && ext === 'mov') {
+    console.error(
+      'note: .mov often won’t play in Chrome/Firefox — prefer .mp4 (H.264/AAC) for the share page.',
+    );
+  }
+  return { buffer, contentType, ext, kind };
 }
 
-async function uploadSceneImage(uid, sceneId, src) {
-  const { buffer, contentType, ext } = await loadImage(src);
+async function uploadSceneMedia(uid, sceneId, src) {
+  const { buffer, contentType, ext, kind } = await loadMedia(src);
   const path = `${uid}/${sceneId}/${randomUUID()}.${ext}`;
   const { error } = await db()
     .storage.from(BUCKET)
     .upload(path, buffer, { contentType, upsert: false });
   if (error) throw error;
+  return { path, kind };
+}
+
+async function uploadSceneImage(uid, sceneId, src) {
+  const { path, kind } = await uploadSceneMedia(uid, sceneId, src);
+  if (kind !== 'image') {
+    await db().storage.from(BUCKET).remove([path]).catch(() => {});
+    throw new Error(
+      `"${src}" is a video — the image command and --image only accept images. ` +
+        'Use --media / `sb media <post> add` on a social project instead.',
+    );
+  }
   return path;
 }
 
@@ -339,6 +394,140 @@ function announce(project) {
 }
 
 // ---------------------------------------------------------------------------
+// Social-post helpers (statuses, platforms, schedule, project kinds)
+// ---------------------------------------------------------------------------
+
+// Mirrors the DB CHECK constraint — validate here so users get a friendly
+// message instead of a 23514 violation.
+const STATUSES = ['idea', 'draft', 'ready', 'scheduled', 'posted'];
+
+const KNOWN_PLATFORMS = [
+  'linkedin',
+  'instagram',
+  'x',
+  'facebook',
+  'tiktok',
+  'youtube',
+  'threads',
+  'pinterest',
+];
+const PLATFORM_ALIASES = {
+  twitter: 'x',
+  ig: 'instagram',
+  insta: 'instagram',
+  yt: 'youtube',
+  fb: 'facebook',
+  'in': 'linkedin',
+};
+
+function parseStatusFlag(value) {
+  const v = String(value).toLowerCase().trim();
+  if (!STATUSES.includes(v)) {
+    throw new Error(`Invalid --status "${value}". One of: ${STATUSES.join(', ')}`);
+  }
+  return v;
+}
+
+function parsePlatformsFlag(value) {
+  const raw = String(value).trim();
+  if (raw.toLowerCase() === 'none') return [];
+  const slugs = raw
+    .split(',')
+    .map((s) => s.toLowerCase().trim())
+    .filter(Boolean)
+    .map((s) => PLATFORM_ALIASES[s] ?? s);
+  const unique = [...new Set(slugs)];
+  if (unique.length === 0) {
+    throw new Error('Provide --platforms as a comma list (e.g. instagram,linkedin) or "none".');
+  }
+  for (const slug of unique) {
+    if (!KNOWN_PLATFORMS.includes(slug)) {
+      console.error(`note: unknown platform "${slug}" (known: ${KNOWN_PLATFORMS.join(', ')})`);
+    }
+  }
+  return unique;
+}
+
+// "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" (24h, machine-local time) → ISO string.
+// "none" clears the schedule (set only).
+function parseScheduleFlag(value) {
+  const raw = String(value).trim();
+  if (raw.toLowerCase() === 'none') return null;
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{1,2}):(\d{2}))?$/);
+  if (!m) {
+    throw new Error(
+      `Invalid --schedule "${value}". Use "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" ` +
+        '(24-hour, local time), or "none" to clear.',
+    );
+  }
+  const [, y, mo, d, hh, mi] = m;
+  const date = new Date(Number(y), Number(mo) - 1, Number(d), Number(hh ?? 0), Number(mi ?? 0));
+  const valid =
+    date.getFullYear() === Number(y) &&
+    date.getMonth() === Number(mo) - 1 &&
+    date.getDate() === Number(d) &&
+    date.getHours() === Number(hh ?? 0) &&
+    date.getMinutes() === Number(mi ?? 0);
+  if (!valid) throw new Error(`Invalid --schedule "${value}" — that date/time doesn't exist.`);
+  return date.toISOString();
+}
+
+// Pre-migration databases have no kind column; treat undefined as storyboard
+// so all the original commands keep working there.
+function projectKind(project) {
+  return project.kind ?? 'storyboard';
+}
+
+function assertSocial(project, what) {
+  if (projectKind(project) !== 'social') {
+    throw new Error(
+      `"${project.name}" is a storyboard project — ${what} only applies to social ` +
+        'projects. Create one with:  sb project add "Name" --social',
+    );
+  }
+}
+
+function assertStoryboard(project, what) {
+  if (projectKind(project) === 'social') {
+    throw new Error(
+      `"${project.name}" is a social project — ${what} is for storyboard scenes. ` +
+        'Use --media / `sb media <post> add` instead.',
+    );
+  }
+}
+
+async function fetchSceneMediaRows(sceneId) {
+  const { data, error } = await db()
+    .from('scene_media')
+    .select('*')
+    .eq('scene_id', sceneId)
+    .order('position', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+async function insertMediaRow(uid, sceneId, { path, kind }, position) {
+  const { data, error } = await db()
+    .from('scene_media')
+    .insert({ user_id: uid, scene_id: sceneId, kind, path, position })
+    .select()
+    .single();
+  if (error) {
+    await db().storage.from(BUCKET).remove([path]).catch(() => {});
+    throw error;
+  }
+  return data;
+}
+
+function formatSchedule(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  if (d.getHours() === 0 && d.getMinutes() === 0) return date;
+  return `${date}, ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+// ---------------------------------------------------------------------------
 // Project commands
 // ---------------------------------------------------------------------------
 
@@ -353,18 +542,29 @@ async function cmdProjects() {
   projects.forEach((p, i) => {
     const dot = p.id === state.projectId ? '●' : ' ';
     const num = String(i + 1).padStart(2, ' ');
-    console.log(`${dot} ${num}. ${truncate(p.name, 30).padEnd(30, ' ')}  ${p.id.slice(0, 8)}`);
+    // Blank tag for storyboard keeps the original output shape.
+    const tag = projectKind(p) === 'social' ? '  [social]' : '';
+    console.log(`${dot} ${num}. ${truncate(p.name, 30).padEnd(30, ' ')}  ${p.id.slice(0, 8)}${tag}`);
   });
 }
 
-async function cmdProject(positional) {
+async function cmdProject(positional, flags) {
   const sub = positional[0];
   if (sub === 'add' || sub === 'create' || sub === 'new') {
     const name = positional.slice(1).join(' ');
     if (!name) throw new Error('Provide a name:  sb project add "My Storyboard"');
-    const p = await createProject(name);
+    let kind = 'storyboard';
+    if (flags.social === true) kind = 'social';
+    else if (typeof flags.kind === 'string') {
+      kind = flags.kind.toLowerCase().trim();
+      if (kind !== 'storyboard' && kind !== 'social') {
+        throw new Error(`Invalid --kind "${flags.kind}". Use storyboard or social.`);
+      }
+    }
+    const p = await createProject(name, kind);
     await setCurrentProject(p.id);
-    console.log(`Created project "${p.name}" (${p.id.slice(0, 8)}) and made it current.`);
+    const label = kind === 'social' ? 'social project' : 'project';
+    console.log(`Created ${label} "${p.name}" (${p.id.slice(0, 8)}) and made it current.`);
     return;
   }
   if (sub === 'use' || sub === 'switch') {
@@ -408,6 +608,42 @@ async function cmdList(flags) {
   const project = await resolveActiveProject(flags);
   announce(project);
   const scenes = await orderedScenes(project.id);
+
+  if (projectKind(project) === 'social') {
+    if (scenes.length === 0) {
+      console.log('Pipeline is empty. Add a post with: npm run sb -- add --copy "..."');
+      return;
+    }
+    // Media counts in one query; the table exists whenever a project can be
+    // social (the same migration adds both).
+    const { data: mediaRows, error } = await db()
+      .from('scene_media')
+      .select('scene_id')
+      .in('scene_id', scenes.map((s) => s.id));
+    if (error) throw error;
+    const mediaCount = {};
+    (mediaRows ?? []).forEach((m) => {
+      mediaCount[m.scene_id] = (mediaCount[m.scene_id] ?? 0) + 1;
+    });
+
+    console.log(`${scenes.length} post(s):\n`);
+    scenes.forEach((s, i) => {
+      const num = String(i + 1).padStart(2, ' ');
+      const name = truncate(s.name || '(untitled)', 28).padEnd(28, ' ');
+      console.log(`${num}. ${name}  ${s.id.slice(0, 8)}`);
+      const parts = [
+        `status: ${s.status ?? 'draft'}`,
+        `sched: ${formatSchedule(s.scheduled_at)}`,
+        `platforms: ${s.platforms?.length ? s.platforms.join(', ') : '—'}`,
+        `media: ${mediaCount[s.id] ?? 0}`,
+      ];
+      console.log(`      ${parts.join(' · ')}`);
+      if (s.copy) console.log(`      copy: ${truncate(s.copy, 90)}`);
+      if (s.prompt) console.log(`      prompt: ${truncate(s.prompt, 90)}`);
+    });
+    return;
+  }
+
   if (scenes.length === 0) {
     console.log('Board is empty. Add a scene with: npm run sb -- add --prompt "..."');
     return;
@@ -426,21 +662,36 @@ async function cmdAdd(flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
   announce(project);
+
+  const socialFlagUsed =
+    typeof flags.copy === 'string' ||
+    Array.isArray(flags.media) ||
+    typeof flags.schedule === 'string' ||
+    typeof flags.platforms === 'string' ||
+    typeof flags.status === 'string';
+  if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--media/--schedule/--platforms/--status)');
+  if (typeof flags.image === 'string') assertStoryboard(project, '--image');
+  const isSocial = projectKind(project) === 'social';
+
   const scenes = await orderedScenes(project.id);
   const nextOrder = scenes.length ? Math.max(...scenes.map((s) => s.order_index)) + 1 : 0;
 
-  const { data: scene, error } = await db()
-    .from('scenes')
-    .insert({
-      user_id: uid,
-      project_id: project.id,
-      order_index: nextOrder,
-      name: typeof flags.name === 'string' ? flags.name : '',
-      description: typeof flags.desc === 'string' ? flags.desc : '',
-      prompt: typeof flags.prompt === 'string' ? flags.prompt : '',
-    })
-    .select()
-    .single();
+  const row = {
+    user_id: uid,
+    project_id: project.id,
+    order_index: nextOrder,
+    name: typeof flags.name === 'string' ? flags.name : '',
+    description: typeof flags.desc === 'string' ? flags.desc : '',
+    prompt: typeof flags.prompt === 'string' ? flags.prompt : '',
+  };
+  // Only include post columns when their flags were passed, so storyboard adds
+  // keep working on a database that hasn't run the migration yet.
+  if (typeof flags.copy === 'string') row.copy = flags.copy;
+  if (typeof flags.status === 'string') row.status = parseStatusFlag(flags.status);
+  if (typeof flags.schedule === 'string') row.scheduled_at = parseScheduleFlag(flags.schedule);
+  if (typeof flags.platforms === 'string') row.platforms = parsePlatformsFlag(flags.platforms);
+
+  const { data: scene, error } = await db().from('scenes').insert(row).select().single();
   if (error) throw error;
 
   if (typeof flags.image === 'string') {
@@ -456,37 +707,201 @@ async function cmdAdd(flags) {
     scene.image_path = path;
   }
 
-  console.log(`Added scene #${scenes.length + 1} (${scene.id.slice(0, 8)})`);
+  // Upload media sequentially; on a failure keep what already landed and tell
+  // the user how to resume, so a flaky URL never orphans the whole post.
+  let mediaAdded = 0;
+  if (Array.isArray(flags.media)) {
+    for (let i = 0; i < flags.media.length; i++) {
+      const src = flags.media[i];
+      try {
+        const uploaded = await uploadSceneMedia(uid, scene.id, src);
+        await insertMediaRow(uid, scene.id, uploaded, i);
+        mediaAdded++;
+      } catch (err) {
+        throw new Error(
+          `Post created (${scene.id.slice(0, 8)}) but media #${i + 1} ("${src}") failed: ` +
+            `${err.message || err}. Add it with: sb media ${scene.id.slice(0, 8)} add <src>`,
+        );
+      }
+    }
+  }
+
+  console.log(`Added ${isSocial ? 'post' : 'scene'} #${scenes.length + 1} (${scene.id.slice(0, 8)})`);
   if (scene.name) console.log(`  name: ${scene.name}`);
+  if (scene.copy) console.log(`  copy: ${truncate(scene.copy, 90)}`);
+  if (typeof flags.status === 'string') console.log(`  status: ${scene.status}`);
+  if (scene.scheduled_at) console.log(`  sched: ${formatSchedule(scene.scheduled_at)}`);
+  if (scene.platforms?.length) console.log(`  platforms: ${scene.platforms.join(', ')}`);
   if (scene.prompt) console.log(`  prompt: ${truncate(scene.prompt, 90)}`);
   if (scene.image_path) console.log('  image: uploaded ✓');
+  if (mediaAdded) console.log(`  media: ${mediaAdded} uploaded ✓`);
 }
 
 async function cmdSet(positional, flags) {
   const project = await resolveActiveProject(flags);
   announce(project);
   const scene = await resolveScene(project.id, positional[0]);
+
+  const socialFlagUsed =
+    typeof flags.copy === 'string' ||
+    typeof flags.schedule === 'string' ||
+    typeof flags.platforms === 'string' ||
+    typeof flags.status === 'string';
+  if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms/--status)');
+  const isSocial = projectKind(project) === 'social';
+
   const patch = {};
   if (typeof flags.name === 'string') patch.name = flags.name;
   if (typeof flags.desc === 'string') patch.description = flags.desc;
   if (typeof flags.prompt === 'string') patch.prompt = flags.prompt;
+  if (typeof flags.copy === 'string') patch.copy = flags.copy;
+  if (typeof flags.status === 'string') patch.status = parseStatusFlag(flags.status);
+  if (typeof flags.schedule === 'string') patch.scheduled_at = parseScheduleFlag(flags.schedule);
+  if (typeof flags.platforms === 'string') patch.platforms = parsePlatformsFlag(flags.platforms);
   if (Object.keys(patch).length === 0) {
-    throw new Error('Nothing to update. Pass --name, --desc, and/or --prompt.');
+    throw new Error(
+      isSocial
+        ? 'Nothing to update. Pass --name, --desc, --prompt, --copy, --status, --schedule, and/or --platforms.'
+        : 'Nothing to update. Pass --name, --desc, and/or --prompt.',
+    );
   }
   patch.updated_at = new Date().toISOString();
   const { error } = await db().from('scenes').update(patch).eq('id', scene.id);
   if (error) throw error;
   console.log(
-    `Updated scene ${scene.id.slice(0, 8)} (${Object.keys(patch)
+    `Updated ${isSocial ? 'post' : 'scene'} ${scene.id.slice(0, 8)} (${Object.keys(patch)
       .filter((k) => k !== 'updated_at')
       .join(', ')})`,
   );
+}
+
+async function cmdMedia(positional, flags) {
+  const uid = await ownerId();
+  const project = await resolveActiveProject(flags);
+  announce(project);
+  assertSocial(project, 'the media command');
+  const scene = await resolveScene(project.id, positional[0]);
+  const sub = positional[1] ?? 'list';
+
+  if (sub === 'list') {
+    const media = await fetchSceneMediaRows(scene.id);
+    if (media.length === 0) {
+      console.log(`No media on post ${scene.id.slice(0, 8)}. Add some: sb media ${scene.id.slice(0, 8)} add <path|url>`);
+      return;
+    }
+    console.log(`${media.length} media item(s) on post ${scene.id.slice(0, 8)}:\n`);
+    media.forEach((m, i) => {
+      const num = String(i + 1).padStart(2, ' ');
+      const ext = (m.path.split('.').pop() || '').toLowerCase();
+      const icon = m.kind === 'video' ? '🎞' : '🖼';
+      console.log(`${num}. ${icon} ${m.kind.padEnd(5, ' ')} .${ext.padEnd(4, ' ')} ${m.id.slice(0, 8)}`);
+    });
+    return;
+  }
+
+  if (sub === 'add') {
+    const sources = [...positional.slice(2), ...(Array.isArray(flags.media) ? flags.media : [])];
+    if (sources.length === 0) {
+      throw new Error('Provide one or more paths/URLs: sb media <post> add <path|url> …');
+    }
+    const existing = await fetchSceneMediaRows(scene.id);
+    let position = existing.length ? Math.max(...existing.map((m) => m.position)) + 1 : 0;
+    let added = 0;
+    for (const src of sources) {
+      try {
+        const uploaded = await uploadSceneMedia(uid, scene.id, src);
+        await insertMediaRow(uid, scene.id, uploaded, position);
+        position++;
+        added++;
+      } catch (err) {
+        throw new Error(
+          `Added ${added} of ${sources.length}; "${src}" failed: ${err.message || err}. ` +
+            'Re-run `sb media … add` with the remaining sources.',
+        );
+      }
+    }
+    console.log(`Added ${added} media item(s) to post ${scene.id.slice(0, 8)} ✓`);
+    return;
+  }
+
+  if (sub === 'rm' || sub === 'remove' || sub === 'delete') {
+    const media = await fetchSceneMediaRows(scene.id);
+    const n = Number(positional[2]);
+    if (!Number.isInteger(n) || n < 1 || n > media.length) {
+      throw new Error(`Pick a media index 1–${media.length} (from \`sb media ${positional[0]}\`).`);
+    }
+    const item = media[n - 1];
+    const { error } = await db().from('scene_media').delete().eq('id', item.id);
+    if (error) throw error;
+    await db().storage.from(BUCKET).remove([item.path]).catch(() => {});
+    // Renumber survivors so positions stay dense.
+    const survivors = media.filter((m) => m.id !== item.id);
+    if (survivors.length) {
+      const rows = survivors.map((m, i) => ({ ...m, position: i }));
+      const { error: e2 } = await db().from('scene_media').upsert(rows, { onConflict: 'id' });
+      if (e2) throw e2;
+    }
+    console.log(`Removed media #${n} (${item.kind}) from post ${scene.id.slice(0, 8)}`);
+    return;
+  }
+
+  if (sub === 'order') {
+    const media = await fetchSceneMediaRows(scene.id);
+    const spec = (positional[2] ?? '').split(',').map((s) => Number(s.trim()));
+    const sorted = [...spec].sort((a, b) => a - b);
+    const isPermutation =
+      spec.length === media.length && sorted.every((v, i) => v === i + 1);
+    if (!isPermutation) {
+      throw new Error(
+        `--order must be a full permutation of 1..${media.length} (e.g. "sb media <post> order 3,1,2").`,
+      );
+    }
+    const rows = spec.map((idx, i) => ({ ...media[idx - 1], position: i }));
+    const { error } = await db().from('scene_media').upsert(rows, { onConflict: 'id' });
+    if (error) throw error;
+    console.log(`Reordered ${media.length} media item(s) on post ${scene.id.slice(0, 8)} ✓`);
+    return;
+  }
+
+  throw new Error('Usage: sb media <post> [list | add <path|url>… | rm <n> | order 3,1,2]');
+}
+
+async function cmdShare(flags) {
+  const project = await resolveActiveProject(flags);
+  announce(project);
+
+  if (flags.regenerate === true) {
+    const token = randomUUID();
+    const { error } = await db()
+      .from('projects')
+      .update({ share_token: token, updated_at: new Date().toISOString() })
+      .eq('id', project.id);
+    if (error) throw error;
+    project.share_token = token;
+    console.error('Share link regenerated — previous links no longer work.');
+  }
+
+  if (!project.share_token) {
+    throw new Error(
+      'This database has no share tokens yet — run ' +
+        'supabase/migrations/0002_social_pipeline.sql in the Supabase SQL editor first.',
+    );
+  }
+
+  const base = (process.env.STORYBOARD_APP_URL || '').replace(/\/+$/, '');
+  if (base) {
+    console.log(`${base}/share/${project.share_token}`);
+  } else {
+    console.log(`/share/${project.share_token}`);
+    console.error('Set STORYBOARD_APP_URL in .env.local to print full share URLs.');
+  }
 }
 
 async function cmdImage(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
   announce(project);
+  assertStoryboard(project, 'the image command');
   const scene = await resolveScene(project.id, positional[0]);
   const src = positional[1];
   if (!src) throw new Error('Provide an image path or URL: sb image <scene> <path|url>');
@@ -564,30 +979,42 @@ async function cmdScript(positional, flags) {
 function printHelp() {
   console.log(
     [
-      'sb — Storyboard agent CLI',
+      'sb — Storyboard agent CLI (storyboards + social-post pipelines)',
       '',
       'Usage: npm run sb -- <command> [args]',
       '',
       'Project commands:',
       '  projects                               List your projects (● = current)',
-      '  project add <name…>                    Create a project + make it current',
+      '  project add <name…> [--social]         Create a project + make it current',
       '  project use <project>                  Set the current project',
       '  project rename <project> <name…>       Rename a project',
-      '  project rm <project>                   Delete a project (+ its scenes/images)',
+      '  project rm <project>                   Delete a project (+ its scenes/media)',
       '',
-      'Scene commands (act on the current project; override with --project):',
-      '  list                                   Show the board',
+      'Scene/post commands (act on the current project; override with --project):',
+      '  list                                   Show the board / pipeline',
       '  add [--name N] [--desc D] [--prompt P] [--image PATH|URL]',
-      '  set <scene> [--name N] [--desc D] [--prompt P]',
-      '  image <scene> <PATH|URL>               Upload/replace a scene image',
-      '  rm <scene>                             Delete a scene + its images',
-      '  script get                             Print screenplay text',
-      '  script set <PATH|->                    Replace screenplay text',
+      '      [--copy TEXT] [--media PATH|URL]… [--schedule "YYYY-MM-DD[ HH:MM]"]',
+      '      [--platforms a,b,c] [--status S]',
+      '  set <scene> [--name N] [--desc D] [--prompt P] [--copy TEXT]',
+      '      [--schedule …|none] [--platforms …|none] [--status S]',
+      '  image <scene> <PATH|URL>               Upload/replace a storyboard scene image',
+      '  media <post> [list]                    List a post’s media',
+      '  media <post> add <PATH|URL>…           Append images/videos to a post',
+      '  media <post> rm <n>                    Remove media item n (1-based)',
+      '  media <post> order 3,1,2               Reorder media (full permutation)',
+      '  share [--regenerate]                   Print the read-only share link',
+      '  rm <scene>                             Delete a scene/post + its media',
+      '  script get                             Print script/notes text',
+      '  script set <PATH|->                    Replace script/notes text',
       '',
       '<project> = index from `projects`, a name, a full UUID, or an id prefix.',
-      '<scene>   = 1-based index from `list`, a full UUID, or an id prefix.',
+      '<scene>/<post> = 1-based index from `list`, a full UUID, or an id prefix.',
       '--project <project> scopes a scene command to a project for one run.',
-      '--image accepts a local file path or an http(s) URL.',
+      '--image/--media accept a local file path or an http(s) URL. --media repeats.',
+      `--status is one of: ${STATUSES.join(', ')}.`,
+      '--schedule is local time; "none" clears it (same for --platforms).',
+      'Platform aliases normalize (twitter→x, ig→instagram, …); unknowns warn.',
+      'Videos: prefer .mp4 (H.264) ≤50MB (Supabase per-file cap; raiseable).',
     ].join('\n'),
   );
 }
@@ -605,13 +1032,13 @@ async function main() {
 
   requireConfig();
   await initClient();
-  const { flags, positional } = parseArgs(rest);
+  const { flags, positional } = parseArgs(rest, new Set(['media']));
 
   switch (command) {
     case 'projects':
       return cmdProjects();
     case 'project':
-      return cmdProject(positional);
+      return cmdProject(positional, flags);
     case 'list':
       return cmdList(flags);
     case 'add':
@@ -620,6 +1047,10 @@ async function main() {
       return cmdSet(positional, flags);
     case 'image':
       return cmdImage(positional, flags);
+    case 'media':
+      return cmdMedia(positional, flags);
+    case 'share':
+      return cmdShare(flags);
     case 'rm':
     case 'remove':
     case 'delete':
@@ -633,7 +1064,31 @@ async function main() {
   }
 }
 
+// Errors that smell like "the social-pipeline migration hasn't run here yet"
+// get a pointer to the fix instead of a bare Postgres/PostgREST code.
+function migrationHint(err) {
+  const code = err?.code ?? '';
+  const msg = String(err?.message ?? err ?? '');
+  const missingSchema =
+    ['PGRST204', 'PGRST205', '42703', '42P01'].includes(code) ||
+    /schema cache|does not exist/i.test(msg);
+  if (missingSchema && /kind|share_token|scene_media|copy|status|scheduled_at|platforms/i.test(msg)) {
+    return (
+      '\nThis database hasn’t run the social-pipeline migration yet. Run ' +
+      'supabase/migrations/0002_social_pipeline.sql in the Supabase SQL editor ' +
+      '(take a backup first).'
+    );
+  }
+  if (/maximum allowed size|payload too large|exceeded/i.test(msg)) {
+    return (
+      '\nThe file exceeds Supabase’s per-file upload cap (50MB by default). ' +
+      'Raise it under Dashboard → Storage → Settings, or compress the video.'
+    );
+  }
+  return '';
+}
+
 main().catch((err) => {
-  console.error(`Error: ${err.message || err}`);
+  console.error(`Error: ${err.message || err}${migrationHint(err)}`);
   process.exit(1);
 });

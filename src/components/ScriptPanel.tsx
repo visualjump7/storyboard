@@ -11,9 +11,22 @@ type ScriptPanelProps = {
   userId: string;
   projectId: string;
   onClose: () => void;
+  /** Panel heading — social pipelines relabel this to "Notes". */
+  title?: string;
+  placeholder?: string;
 };
 
-export function ScriptPanel({ supabase, userId, projectId, onClose }: ScriptPanelProps) {
+const DEFAULT_PLACEHOLDER =
+  'Write your full script here…\n\nINT. WAREHOUSE — NIGHT\n\nA single bulb sways overhead…';
+
+export function ScriptPanel({
+  supabase,
+  userId,
+  projectId,
+  onClose,
+  title = 'Script',
+  placeholder = DEFAULT_PLACEHOLDER,
+}: ScriptPanelProps) {
   // null while loading, so we never overwrite stored text with an empty string.
   const [text, setText] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -50,7 +63,7 @@ export function ScriptPanel({ supabase, userId, projectId, onClose }: ScriptPane
     <div className="flex w-[380px] flex-none flex-col border-l border-line bg-panel">
       <div className="flex h-[52px] flex-none items-center justify-between px-[18px]">
         <div className="flex items-center gap-[9px]">
-          <span className="text-[13.5px] font-semibold">Script</span>
+          <span className="text-[13.5px] font-semibold">{title}</span>
           <span className="text-[11.5px] text-muted">
             {text === null ? 'Loading…' : `${words} words`}
           </span>
@@ -58,7 +71,7 @@ export function ScriptPanel({ supabase, userId, projectId, onClose }: ScriptPane
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close script panel"
+          aria-label={`Close ${title.toLowerCase()} panel`}
           className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#8a8a92] transition-colors hover:bg-[#1f1f25] hover:text-ink"
         >
           <ChevronRight size={15} />
@@ -71,7 +84,7 @@ export function ScriptPanel({ supabase, userId, projectId, onClose }: ScriptPane
           setText(e.target.value);
           setDirty(true);
         }}
-        placeholder={'Write your full script here…\n\nINT. WAREHOUSE — NIGHT\n\nA single bulb sways overhead…'}
+        placeholder={placeholder}
         className="w-full flex-1 resize-none border-none bg-transparent p-[18px] text-[13.5px] leading-[1.7] text-[#cfcfd4] outline-none"
       />
     </div>

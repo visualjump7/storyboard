@@ -1,10 +1,12 @@
 # Storyboard (cloud)
 
-A cloud, dark-themed app for planning video scenes — a visual scene organizer
-(think Adobe Bridge) combined with a script editor. Single user, private behind
-a login, reachable from any computer via a deployed URL. It is heavily
-image-driven: scene images upload, replace, and delete fast, and everything
-persists in the cloud.
+A cloud, dark-themed planning app. Each project is either a **film storyboard**
+— a visual scene organizer (think Adobe Bridge) with a script editor — or a
+**social-post pipeline** — posts with copy, multiple images/video, a posting
+schedule, statuses, and target platforms, plus a public read-only **share link**
+for team review. Single user, private behind a login, reachable from any
+computer via a deployed URL. Nothing publishes to social networks from here;
+it's the planning and review surface.
 
 **Stack:** Next.js (App Router) + TypeScript · Tailwind CSS · Supabase
 (Auth + Postgres + Storage) · @dnd-kit · `@supabase/ssr`.
@@ -75,6 +77,9 @@ empty with an "Add your first scene" action.
    for Production (and Preview if you want it):
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY` — mark it **Sensitive**. Server-only; used
+     exclusively by the public read-only `/share/{token}` page to resolve share
+     tokens and sign media URLs. Never expose it with a `NEXT_PUBLIC_` prefix.
 4. **Deploy.** Your app is live at the Vercel URL. Sign in with your owner
    account. Data and images live in Supabase, so the same content is available
    from any computer.
@@ -82,6 +87,21 @@ empty with an "Add your first scene" action.
 No extra Supabase config is needed for the Vercel domain — the browser talks to
 Supabase directly using the public URL + anon key, and auth cookies are managed
 by `@supabase/ssr` middleware.
+
+### Upgrading an existing database
+
+Fresh projects get everything from `schema.sql`. An existing database upgrades
+with the numbered migrations, run **in order** in the SQL editor (take a backup
+first — Dashboard → Database → Backups):
+
+1. `supabase/migrations/0001_multi_project.sql` — single board → projects.
+2. `supabase/migrations/0002_social_pipeline.sql` — adds `projects.kind`,
+   per-project `share_token`s, the post columns on `scenes`
+   (`copy`/`status`/`scheduled_at`/`platforms`), and the `scene_media` table.
+   Purely additive and idempotent; the deployed app keeps working while it runs.
+
+Videos share the `scene-images` bucket. Supabase's default per-file upload cap
+is 50MB — raise it under **Storage → Settings** if you need larger clips.
 
 ---
 

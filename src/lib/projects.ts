@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Project } from './types';
+import type { Project, ProjectKind } from './types';
 import { removeSceneFolder } from './storage';
 
 /** Fetch all of the current user's projects, oldest first. */
@@ -26,15 +26,16 @@ export async function fetchProject(
   return (data as Project) ?? null;
 }
 
-/** Create a new project for the user. */
+/** Create a new project for the user (a storyboard or a social pipeline). */
 export async function createProject(
   supabase: SupabaseClient,
   userId: string,
   name: string,
+  kind: ProjectKind = 'storyboard',
 ): Promise<Project> {
   const { data, error } = await supabase
     .from('projects')
-    .insert({ user_id: userId, name: name.trim() || 'Untitled project' })
+    .insert({ user_id: userId, name: name.trim() || 'Untitled project', kind })
     .select()
     .single();
   if (error) throw error;

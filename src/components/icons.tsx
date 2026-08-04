@@ -155,6 +155,38 @@ export function SignOut({ size = 15, className }: IconProps) {
   );
 }
 
+export function Play({ size = 14, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M8 5.5v13a1 1 0 0 0 1.52.86l10.2-6.5a1 1 0 0 0 0-1.72L9.52 4.64A1 1 0 0 0 8 5.5z" />
+    </svg>
+  );
+}
+
+export function LinkIcon({ size = 13, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className} strokeWidth={1.9}>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </Stroke>
+  );
+}
+
+export function Check({ size = 14, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className} strokeWidth={2.2}>
+      <path d="M20 6L9 17l-5-5" />
+    </Stroke>
+  );
+}
+
 export function Spinner({ size = 22, className }: IconProps) {
   return (
     <svg

@@ -1,25 +1,31 @@
 ---
 name: storyboard
-description: Push projects, scenes, prompts, and images into the cloud storyboard app (the Supabase-backed Next.js board in this repo). Use whenever the user wants to add, update, reorder, or remove a storyboard scene, create/switch/rename/delete a project (storyboard), set a generation prompt, attach or replace a scene image, or read back the current board — e.g. "add this to the storyboard", "new project for the tornado film", "switch to the X project", "put this shot in the board", "update scene 2's prompt", "what's on the storyboard". Also use after generating or downloading an image the user wants saved as a scene.
+description: Push projects, scenes, social posts, prompts, media, and schedules into the cloud storyboard/pipeline app (the Supabase-backed Next.js board in this repo). Use whenever the user wants to add, update, reorder, or remove a storyboard scene OR a social post, create/switch/rename/delete a project (storyboard or social pipeline), set a generation prompt or post copy, attach or replace scene images or post media (images/video), set a posting schedule/status/platforms, get the read-only share link, or read back the current board — e.g. "add this to the storyboard", "new project for the tornado film", "add this to the social pipeline", "schedule that post for Friday", "mark post 2 ready", "put these three images on the post", "what's in the pipeline", "give me the share link". Also use after generating or downloading an image/video the user wants saved as a scene or post.
 ---
 
-# Storyboard
+# Storyboard + Social Pipeline
 
-Push content into the cloud storyboard via the `sb` CLI (`scripts/sb.mjs`). It writes
+Push content into the cloud app via the `sb` CLI (`scripts/sb.mjs`). It writes
 directly to the same Supabase backend the deployed web app reads from, so anything you
 add appears in the browser instantly. Never tell the user to use the browser to do
 something this CLI can do.
 
+Projects come in two kinds:
+- **storyboard** — film boards: scenes with a prompt and one image.
+- **social** — post pipelines: posts with copy, multiple media (images/video),
+  a schedule, a status (idea/draft/ready/scheduled/posted), and platforms.
+  Nothing publishes from here; it's the planning/review surface.
+
 ## Projects come first
 
-The app has multiple **projects** (storyboards). Scene commands act on the **current
-project** (remembered in the gitignored `.sb-state.json`). Before adding/editing
-scenes, make sure you're on the right project:
+Scene/post commands act on the **current project** (remembered in the gitignored
+`.sb-state.json`). Before adding/editing, make sure you're on the right project:
 
 - If the user names a project, `npm run sb -- project use "<name>"` first (or pass
   `--project "<name>"` on the command).
 - If you're unsure which project, run `npm run sb -- projects` and ask — don't guess.
-- Scene commands print `Using project: X` to stderr; glance at it to confirm the target.
+  Social content belongs in a `[social]` project; film scenes in a storyboard one.
+- Commands print `Using project: X` to stderr; glance at it to confirm the target.
 
 ## How to use it
 
@@ -33,42 +39,69 @@ Project commands:
 
 | Goal | Command |
 |------|---------|
-| List projects (● = current) | `npm run sb -- projects` |
-| Create a project + switch to it | `npm run sb -- project add "Tornado Film"` |
-| Switch the current project | `npm run sb -- project use "Tornado Film"` |
+| List projects (● = current, `[social]` tag) | `npm run sb -- projects` |
+| Create a storyboard + switch to it | `npm run sb -- project add "Tornado Film"` |
+| Create a social pipeline + switch to it | `npm run sb -- project add "Q3 Social" --social` |
+| Switch the current project | `npm run sb -- project use "Q3 Social"` |
 | Rename a project | `npm run sb -- project rename 2 "New name"` |
-| Delete a project (+ its scenes/images) | `npm run sb -- project rm 3` |
+| Delete a project (+ its scenes/media) | `npm run sb -- project rm 3` |
 
-Scene commands (act on the current project):
+Board/pipeline commands (act on the current project):
 
 | Goal | Command |
 |------|---------|
-| Read the current board | `npm run sb -- list` |
-| Add a scene | `npm run sb -- add --name "Opening" --prompt "wide drone shot at dawn" --image ./shot.png` |
-| Add a prompt-only scene | `npm run sb -- add --prompt "..."` |
-| Update a scene's prompt/name/desc | `npm run sb -- set 2 --prompt "tighter framing"` |
-| Attach/replace an image | `npm run sb -- image 2 ./new.png` (path **or** http(s) URL) |
+| Read the current board/pipeline | `npm run sb -- list` |
+| Get the read-only share link | `npm run sb -- share` (`--regenerate` rotates it) |
+| Read the script (storyboard) / notes (social) | `npm run sb -- script get` |
+| Replace the script/notes | `npm run sb -- script set ./notes.md` |
+| Act on a different project once | add `--project "<name>"` to any command |
+
+Storyboard scenes:
+
+| Goal | Command |
+|------|---------|
+| Add a scene | `npm run sb -- add --name "Opening" --prompt "wide drone shot" --image ./shot.png` |
+| Update prompt/name/desc | `npm run sb -- set 2 --prompt "tighter framing"` |
+| Attach/replace the image | `npm run sb -- image 2 ./new.png` (path **or** http(s) URL) |
 | Delete a scene | `npm run sb -- rm 3` |
-| Read the screenplay | `npm run sb -- script get` |
-| Replace the screenplay | `npm run sb -- script set ./script.md` |
-| Act on a different project once | add `--project "<name>"` to any scene command |
+
+Social posts:
+
+| Goal | Command |
+|------|---------|
+| Add a post | `npm run sb -- add --name "Teaser" --copy "Launch day…" --media ./a.png --media ./b.mp4 --schedule "2026-08-20 09:30" --platforms instagram,linkedin --status ready` |
+| Update copy/status/etc. | `npm run sb -- set 2 --copy "new text" --status scheduled` |
+| Clear schedule/platforms | `npm run sb -- set 2 --schedule none --platforms none` |
+| List a post's media | `npm run sb -- media 2` |
+| Add media (repeatable) | `npm run sb -- media 2 add ./c.png https://…/d.jpg` |
+| Remove / reorder media | `npm run sb -- media 2 rm 1` · `npm run sb -- media 2 order 3,1,2` |
+| Delete a post | `npm run sb -- rm 3` |
 
 `<project>` is an index from `projects`, a name, a UUID, or an id prefix.
-`<scene>` is a 1-based index from `list`, a full UUID, or an id prefix.
+`<scene>`/`<post>` is a 1-based index from `list`, a full UUID, or an id prefix.
 
-## Working with images
+## Working with media
 
-`--image` / the `image` command accept a **local file path or an http(s) URL** (a URL
-is downloaded, then uploaded to Supabase Storage). So when the user wants an image you
-just generated (e.g. via an image-gen MCP) saved as a scene:
+`--image`, `--media`, and `media add` accept a **local file path or an http(s) URL**
+(URLs are downloaded, then uploaded to Supabase Storage). When the user wants media you
+just generated (e.g. via an image/video-gen MCP) saved:
 1. If you have a URL for it, pass the URL directly.
 2. Otherwise download/save it locally first, then pass the path.
 
+Notes: `--media` repeats for multiple items and only works on social projects
+(`--image` only on storyboards — the CLI errors helpfully if mixed up). Prefer
+**.mp4 (H.264)** for video; `.mov` often won't play in Chrome. Supabase's default
+per-file cap is ~50MB. `--schedule` is local time (`YYYY-MM-DD` or
+`YYYY-MM-DD HH:MM`); statuses are idea/draft/ready/scheduled/posted; platform
+aliases normalize (twitter→x, ig→instagram, yt→youtube, fb→facebook).
+
 ## Recommended flow
 
-1. Run `npm run sb -- list` first to see the board and pick correct scene indexes.
-2. Make the change (`add` / `set` / `image` / `rm`).
-3. Confirm what changed in plain language (e.g. "Added scene 4 with that prompt and image").
+1. Run `npm run sb -- list` first to see the board/pipeline and pick correct indexes.
+2. Make the change (`add` / `set` / `image` / `media` / `rm`).
+3. Confirm what changed in plain language (e.g. "Added the teaser post with 2 images,
+   scheduled Aug 20 at 9:30am for Instagram + LinkedIn").
+4. For team review, offer the share link (`npm run sb -- share`).
 
 ## If the CLI says it isn't configured
 
@@ -76,3 +109,10 @@ It needs a gitignored `.env.local` on this machine (never pulled from GitHub). P
 user to `.env.local.example` and have them fill in `SUPABASE_SERVICE_ROLE_KEY`
 (Supabase Dashboard → Project Settings → API → service_role — secret) and
 `STORYBOARD_OWNER_EMAIL`. The CLI prints the exact lines needed on failure.
+
+## If the CLI suggests a migration
+
+Errors about missing columns/tables (`kind`, `share_token`, `scene_media`, …) mean the
+database predates the social pipeline. Have the user run
+`supabase/migrations/0002_social_pipeline.sql` in the Supabase SQL editor (backup
+first) — it's additive and idempotent.

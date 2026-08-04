@@ -1,4 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
+import { PostPipeline } from '@/components/PostPipeline';
 import { Storyboard } from '@/components/Storyboard';
 import { fetchProject } from '@/lib/projects';
 import { createClient } from '@/lib/supabase/server';
@@ -18,5 +19,11 @@ export default async function ProjectPage({ params }: { params: { projectId: str
   const project = await fetchProject(supabase, params.projectId);
   if (!project) notFound();
 
-  return <Storyboard userId={user.id} project={project} />;
+  // Same route, two surfaces: social projects get the post pipeline, film
+  // projects keep the original storyboard untouched.
+  return project.kind === 'social' ? (
+    <PostPipeline userId={user.id} project={project} />
+  ) : (
+    <Storyboard userId={user.id} project={project} />
+  );
 }

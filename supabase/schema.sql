@@ -3,25 +3,35 @@
 -- Paste this whole file into the Supabase SQL editor and run it.
 -- Safe to re-run (uses IF NOT EXISTS / DROP POLICY IF EXISTS).
 --
--- This is the CURRENT (multi-project) schema for a FRESH project. To upgrade an
--- existing single-board database, run supabase/migrations/0001_multi_project.sql
--- instead — it preserves existing data.
+-- This is the CURRENT schema for a FRESH project: multi-project, with each
+-- project being either a film storyboard (kind='storyboard') or a social-post
+-- pipeline (kind='social' — posts with copy, media, schedule, status). To
+-- upgrade an existing database run the numbered files in supabase/migrations/
+-- instead — they preserve existing data.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- projects (a user can have many; each owns its own scenes + script)
+-- projects (a user can have many; each owns its own scenes + script).
+-- kind picks the UI: 'storyboard' (scene board) or 'social' (post pipeline).
+-- share_token backs the public read-only /share/{token} review page.
 -- ---------------------------------------------------------------------------
 create table if not exists public.projects (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users (id) on delete cascade,
   name        text not null default 'Untitled project',
   description text not null default '',
+  kind        text not null default 'storyboard'
+              check (kind in ('storyboard', 'social')),
+  share_token uuid not null default gen_random_uuid(),
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
 
 create index if not exists projects_user_idx
   on public.projects (user_id, created_at);
+
+create unique index if not exists projects_share_token_key
+  on public.projects (share_token);
 
 alter table public.projects enable row level security;
 
@@ -40,19 +50,27 @@ create policy "projects_delete_own" on public.projects
   for delete using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
--- scenes (belong to a project; ordering is per-project)
+-- scenes (belong to a project; ordering is per-project).
+-- In a kind='social' project each row is a POST: copy/status/scheduled_at/
+-- platforms are meaningful and media lives in scene_media. Storyboard rows
+-- keep those columns at their defaults and use image_path as before.
 -- ---------------------------------------------------------------------------
 create table if not exists public.scenes (
-  id          uuid primary key default gen_random_uuid(),
-  user_id     uuid not null references auth.users (id) on delete cascade,
-  project_id  uuid not null references public.projects (id) on delete cascade,
-  order_index int  not null default 0,
-  name        text not null default '',
-  description text not null default '',
-  prompt      text not null default '',
-  image_path  text,                       -- path in the scene-images bucket, or null
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  project_id   uuid not null references public.projects (id) on delete cascade,
+  order_index  int  not null default 0,
+  name         text not null default '',
+  description  text not null default '',
+  prompt       text not null default '',
+  image_path   text,                      -- storyboard image path, or null
+  copy         text not null default '',  -- social: the post's caption/body text
+  status       text not null default 'draft'
+               check (status in ('idea', 'draft', 'ready', 'scheduled', 'posted')),
+  scheduled_at timestamptz,               -- social: when the post should go out
+  platforms    text[] not null default '{}',  -- social: target platform slugs
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
 );
 
 create index if not exists scenes_project_order_idx
@@ -75,7 +93,42 @@ create policy "scenes_delete_own" on public.scenes
   for delete using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
--- script (one row PER PROJECT)
+-- scene_media (social posts: ordered images/videos; a post can have many).
+-- Objects live in the same private scene-images bucket under the same
+-- "{user_id}/{scene_id}/{uuid}.{ext}" convention, so the storage policies and
+-- folder-cleanup code below cover them with no extra rules.
+-- ---------------------------------------------------------------------------
+create table if not exists public.scene_media (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  scene_id   uuid not null references public.scenes (id) on delete cascade,
+  kind       text not null check (kind in ('image', 'video')),
+  path       text not null,               -- object path in the scene-images bucket
+  position   int  not null default 0,     -- display order within the post
+  created_at timestamptz not null default now()
+);
+
+create index if not exists scene_media_scene_position_idx
+  on public.scene_media (scene_id, position);
+
+alter table public.scene_media enable row level security;
+
+drop policy if exists "scene_media_select_own" on public.scene_media;
+drop policy if exists "scene_media_insert_own" on public.scene_media;
+drop policy if exists "scene_media_update_own" on public.scene_media;
+drop policy if exists "scene_media_delete_own" on public.scene_media;
+
+create policy "scene_media_select_own" on public.scene_media
+  for select using (auth.uid() = user_id);
+create policy "scene_media_insert_own" on public.scene_media
+  for insert with check (auth.uid() = user_id);
+create policy "scene_media_update_own" on public.scene_media
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "scene_media_delete_own" on public.scene_media
+  for delete using (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------------------
+-- script (one row PER PROJECT; social projects use it as planning "Notes")
 -- ---------------------------------------------------------------------------
 create table if not exists public.script (
   id         uuid primary key default gen_random_uuid(),
@@ -105,17 +158,21 @@ create policy "script_delete_own" on public.script
   for delete using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
--- Storage: the "scene-images" bucket (created here, kept private).
+-- Storage: the "scene-images" bucket (created here, kept private). Despite the
+-- name it holds ALL scene/post media — images and videos.
 --
--- The app displays images with short-lived signed URLs, so the bucket must be
+-- The app displays media with short-lived signed URLs, so the bucket must be
 -- private. This insert creates it and re-asserts Public=OFF on every run, so
 -- the privacy guarantee can't drift from a manual dashboard toggle.
 -- (If your project blocks writing to storage.buckets from the SQL editor,
 -- create a bucket named "scene-images" with Public OFF in the dashboard.)
 --
 -- Object paths stay "{user_id}/{scene_id}/{uuid}.{ext}" — scene ids are globally
--- unique, so projects need no path segment and no images ever move between
--- projects. RLS still scopes by the first segment (user_id).
+-- unique, so projects need no path segment and no media ever moves between
+-- projects. RLS still scopes by the first segment (user_id). No per-file size
+-- limit is set here; Supabase's project-level cap applies (50MB by default —
+-- raise it under Storage → Settings for larger videos). The public /share page
+-- signs URLs server-side with the service role, so no anon policy is needed.
 -- ---------------------------------------------------------------------------
 insert into storage.buckets (id, name, public)
 values ('scene-images', 'scene-images', false)
