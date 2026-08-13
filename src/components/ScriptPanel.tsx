@@ -1,7 +1,7 @@
 'use client';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
 import { fetchScript, saveScript } from '@/lib/script';
 import { ChevronRight } from './icons';
@@ -53,6 +53,27 @@ export function ScriptPanel({
     400,
     dirty && text !== null,
   );
+
+  // Live-sync the script (e.g. set from Cowork). Skip while the user has
+  // unsaved local edits so we never overwrite in-progress typing.
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    const channel = supabase
+      .channel(`storyboard-script:${projectId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'script', filter: `project_id=eq.${projectId}` },
+        (payload) => {
+          const incoming = (payload.new as { content?: string } | null)?.content;
+          if (typeof incoming === 'string' && !dirtyRef.current) setText(incoming);
+        },
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, projectId]);
 
   const words = useMemo(() => {
     const t = (text ?? '').trim();

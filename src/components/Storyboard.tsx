@@ -75,6 +75,36 @@ export function Storyboard({ userId, project }: StoryboardProps) {
     };
   }, [supabase]);
 
+  // Live updates: reflect external changes (e.g. scenes created/edited from
+  // Cowork) in real time. Merges incrementally so it never clobbers an
+  // in-progress local edit, and echoes of our own writes are idempotent.
+  useEffect(() => {
+    const channel = supabase
+      .channel(`storyboard-scenes:${project.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'scenes', filter: `project_id=eq.${project.id}` },
+        (payload) => {
+          setScenes((prev) => {
+            if (prev === null) return prev;
+            if (payload.eventType === 'DELETE') {
+              const oldId = (payload.old as { id?: string }).id;
+              return prev.filter((s) => s.id !== oldId);
+            }
+            const row = payload.new as Scene;
+            const merged = prev.some((s) => s.id === row.id)
+              ? prev.map((s) => (s.id === row.id ? { ...s, ...row } : s))
+              : [...prev, row];
+            return merged.slice().sort((a, b) => a.order_index - b.order_index);
+          });
+        },
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, project.id]);
+
   const list = useMemo(() => scenes ?? [], [scenes]);
   const imageUrls = useSceneImageUrls(supabase, list);
 
