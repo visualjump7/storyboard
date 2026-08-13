@@ -31,8 +31,10 @@ export async function signIn(
   _prev: { error: string | null },
   formData: FormData,
 ): Promise<{ error: string | null }> {
-  const expected = process.env.STORYBOARD_PASSWORD;
-  const ownerEmail = process.env.STORYBOARD_OWNER_EMAIL;
+  // Trimmed because these are set through dashboards and CLI prompts, which
+  // readily append a stray newline or space that would silently never match.
+  const expected = process.env.STORYBOARD_PASSWORD?.trim();
+  const ownerEmail = process.env.STORYBOARD_OWNER_EMAIL?.trim();
 
   if (!expected || !ownerEmail) {
     return {
