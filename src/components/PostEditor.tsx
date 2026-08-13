@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { PostFields, PostStatus, Scene, SceneMedia } from '@/lib/types';
-import { POST_STATUSES } from '@/lib/types';
+import { POST_STATUSES, asPostStatus } from '@/lib/types';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
 import { isoToLocalDateInput, isoToLocalTimeInput, localInputsToIso } from '@/lib/pipeline';
 import { PLATFORMS, STATUS_META } from './PostBadges';
@@ -48,7 +48,7 @@ export function PostEditor({
     name: post.name,
     copy: post.copy,
     prompt: post.prompt,
-    status: post.status,
+    status: asPostStatus(post.status),
     platforms: post.platforms,
     scheduledDate: isoToLocalDateInput(post.scheduled_at),
     scheduledTime: isoToLocalTimeInput(post.scheduled_at),

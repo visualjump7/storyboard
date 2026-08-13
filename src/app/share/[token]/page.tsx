@@ -37,7 +37,11 @@ export default async function SharePage({ params }: { params: { token: string } 
               : 'border border-line-2 bg-field text-muted',
           ].join(' ')}
         >
-          {project.kind === 'social' ? 'Social' : 'Storyboard'}
+          {project.kind === 'social'
+            ? 'Social'
+            : project.kind === 'merchandise'
+              ? 'Merchandise'
+              : 'Storyboard'}
         </span>
         <div className="flex-1" />
         <span className="text-[12px] text-muted">Shared board · read-only</span>

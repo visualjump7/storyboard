@@ -16,12 +16,17 @@ export async function fetchScenes(
   return (data ?? []) as Scene[];
 }
 
-/** Create a new empty scene at the end of a project's board. */
+/**
+ * Create a new empty scene at the end of a project's board. `status` is only
+ * passed by kinds whose stages differ from the column default ('draft'):
+ * merchandise items start at 'idea' so they land in the board's first column.
+ */
 export async function createScene(
   supabase: SupabaseClient,
   userId: string,
   projectId: string,
   orderIndex: number,
+  status?: string,
 ): Promise<Scene> {
   const { data, error } = await supabase
     .from('scenes')
@@ -33,6 +38,7 @@ export async function createScene(
       description: '',
       prompt: '',
       image_path: null,
+      ...(status ? { status } : {}),
     })
     .select()
     .single();

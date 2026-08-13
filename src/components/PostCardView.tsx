@@ -1,6 +1,7 @@
 'use client';
 
 import type { Scene, SceneMedia } from '@/lib/types';
+import { asPostStatus } from '@/lib/types';
 import { formatScheduleTime } from '@/lib/pipeline';
 import { PlatformChips, StatusBadge } from './PostBadges';
 import { ImagePlaceholder, Play } from './icons';
@@ -49,7 +50,7 @@ export function PostCardView({ post, media, mediaUrls, showTime }: PostCardViewP
         )}
 
         <div className="absolute left-[9px] top-[9px]">
-          <StatusBadge status={post.status} />
+          <StatusBadge status={asPostStatus(post.status)} />
         </div>
 
         {media !== undefined && media.length > 1 && (

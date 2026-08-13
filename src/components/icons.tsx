@@ -137,6 +137,15 @@ export function Download({ size = 13, className, strokeWidth = 1.8 }: IconProps)
   );
 }
 
+export function Tag({ size = 15, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className}>
+      <path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" />
+      <circle cx="7.5" cy="7.5" r="1.2" />
+    </Stroke>
+  );
+}
+
 export function Trash({ size = 13, className }: IconProps) {
   return (
     <Stroke size={size} className={className}>

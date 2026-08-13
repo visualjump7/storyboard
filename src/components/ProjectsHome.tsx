@@ -6,7 +6,13 @@ import { createClient } from '@/lib/supabase/client';
 import { createProject, deleteProject, renameProject } from '@/lib/projects';
 import { formatNextDate } from '@/lib/pipeline';
 import type { Project, ProjectKind } from '@/lib/types';
-import { GridIcon, Pencil, Plus, ScriptLines, SignOut, Trash } from './icons';
+import { GridIcon, Pencil, Plus, ScriptLines, SignOut, Tag, Trash } from './icons';
+
+const KIND_LABELS: Record<ProjectKind, string> = {
+  storyboard: 'Storyboard',
+  social: 'Social',
+  merchandise: 'Merchandise',
+};
 
 type ProjectsHomeProps = {
   userId: string;
@@ -52,7 +58,9 @@ export function ProjectsHome({ userId, initialProjects, nextScheduled = {} }: Pr
     const what =
       p.kind === 'social'
         ? 'its posts, media, and notes'
-        : 'its scenes, images, and script';
+        : p.kind === 'merchandise'
+          ? 'its items, images, and notes'
+          : 'its scenes, images, and script';
     if (
       !window.confirm(`Delete "${p.name}"? This permanently deletes ${what}. This cannot be undone.`)
     )
@@ -186,7 +194,7 @@ export function ProjectsHome({ userId, initialProjects, nextScheduled = {} }: Pr
                         : 'border border-line-2 bg-field text-muted',
                     ].join(' ')}
                   >
-                    {p.kind === 'social' ? 'Social' : 'Storyboard'}
+                    {KIND_LABELS[p.kind] ?? 'Storyboard'}
                   </span>
                 </div>
                 <div className="text-[15px] font-semibold tracking-[-0.01em] text-bright">{p.name}</div>
@@ -262,6 +270,20 @@ function NewProjectButton({
                 <span className="block text-[13.5px] font-medium text-bright">Social pipeline</span>
                 <span className="mt-0.5 block text-[11.5px] leading-snug text-muted">
                   Posts with copy, media, schedule, and status
+                </span>
+              </span>
+            </button>
+            <div className="h-px bg-line" />
+            <button
+              type="button"
+              onClick={() => onPick('merchandise')}
+              className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[#1a1a20]"
+            >
+              <Tag size={15} className="mt-0.5 flex-none text-muted" />
+              <span>
+                <span className="block text-[13.5px] font-medium text-bright">Merchandise</span>
+                <span className="mt-0.5 block text-[11.5px] leading-snug text-muted">
+                  Products with images, supplier, cost, and margin
                 </span>
               </span>
             </button>

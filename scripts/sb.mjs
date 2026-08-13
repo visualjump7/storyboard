@@ -5,10 +5,12 @@
 // Claude (or you) can push projects, scenes, social posts, prompts, and media
 // into the app from any machine that has this repo + a .env.local.
 //
-// Projects come in two kinds: 'storyboard' (film scene boards — the original)
-// and 'social' (post pipelines: copy + multiple images/videos + schedule +
-// status + platforms). Social-only flags/commands error on storyboard
-// projects, and vice versa for --image.
+// Projects come in three kinds: 'storyboard' (film scene boards — the
+// original), 'social' (post pipelines: copy + multiple images/videos +
+// schedule + status + platforms), and 'merchandise' (product tracking:
+// images + supplier + cost/price + dev time + stage). Kind-specific flags
+// error on the wrong kind rather than writing a column that board never
+// shows.
 //
 // Usage:
 //   npm run sb -- <command> [args]      (note the `--` before args)
@@ -16,7 +18,7 @@
 //
 // Project commands:
 //   projects                              List your projects (● = current)
-//   project add <name…> [--social]        Create a project and make it current
+//   project add <name…> [--social|--merch]  Create a project and make it current
 //   project use <project>                 Set the current project
 //   project rename <project> <name…>      Rename a project
 //   project rm <project>                  Delete a project (and all its scenes/media)
@@ -26,8 +28,10 @@
 //   add [--name N] [--desc D] [--prompt P] [--image PATH|URL]
 //       [--copy TEXT] [--media PATH|URL]… [--schedule "YYYY-MM-DD[ HH:MM]"]
 //       [--platforms a,b,c] [--status S]
+//       [--supplier URL] [--cost N] [--price N] [--dev-time TEXT]
 //   set <scene> [--name N] [--desc D] [--prompt P] [--copy TEXT]
 //       [--schedule …|none] [--platforms …|none] [--status S]
+//       [--supplier URL] [--cost N|none] [--price N|none] [--dev-time TEXT]
 //   image <scene> <PATH|URL>              Upload/replace a storyboard scene's image
 //   media <post> [list]                   List a post's media
 //   media <post> add <PATH|URL>…          Append media (images/videos) to a post
@@ -401,6 +405,10 @@ function announce(project) {
 // message instead of a 23514 violation.
 const STATUSES = ['idea', 'draft', 'ready', 'scheduled', 'posted'];
 
+// Merchandise stages. `status` is one shared column, so the DB CHECK is the
+// union of both lists; the CLI validates against the project's own kind.
+const MERCH_STATUSES = ['idea', 'sourcing', 'quoted', 'sample', 'ready'];
+
 const KNOWN_PLATFORMS = [
   'linkedin',
   'instagram',
@@ -420,12 +428,27 @@ const PLATFORM_ALIASES = {
   'in': 'linkedin',
 };
 
-function parseStatusFlag(value) {
+function parseStatusFlag(value, kind = 'social') {
+  const allowed = kind === 'merchandise' ? MERCH_STATUSES : STATUSES;
   const v = String(value).toLowerCase().trim();
-  if (!STATUSES.includes(v)) {
-    throw new Error(`Invalid --status "${value}". One of: ${STATUSES.join(', ')}`);
+  if (!allowed.includes(v)) {
+    throw new Error(`Invalid --status "${value}". One of: ${allowed.join(', ')}`);
   }
   return v;
+}
+
+/**
+ * Parse a money flag into a number. "none"/"" clears the value back to unknown
+ * (null), which is deliberately distinct from a genuine 0.
+ */
+function parseMoneyFlag(value, flag) {
+  const raw = String(value).trim().replace(/^\$/, '');
+  if (raw === '' || raw.toLowerCase() === 'none') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`Invalid ${flag} "${value}" — pass a non-negative number, or "none" to clear.`);
+  }
+  return Math.round(n * 100) / 100;
 }
 
 function parsePlatformsFlag(value) {
@@ -478,20 +501,36 @@ function projectKind(project) {
   return project.kind ?? 'storyboard';
 }
 
+/** What a scenes row is called in a given project kind. */
+function rowNoun(kind) {
+  if (kind === 'social') return 'post';
+  if (kind === 'merchandise') return 'item';
+  return 'scene';
+}
+
 function assertSocial(project, what) {
   if (projectKind(project) !== 'social') {
     throw new Error(
-      `"${project.name}" is a storyboard project — ${what} only applies to social ` +
+      `"${project.name}" is a ${projectKind(project)} project — ${what} only applies to social ` +
         'projects. Create one with:  sb project add "Name" --social',
     );
   }
 }
 
-function assertStoryboard(project, what) {
-  if (projectKind(project) === 'social') {
+function assertMerch(project, what) {
+  if (projectKind(project) !== 'merchandise') {
     throw new Error(
-      `"${project.name}" is a social project — ${what} is for storyboard scenes. ` +
-        'Use --media / `sb media <post> add` instead.',
+      `"${project.name}" is a ${projectKind(project)} project — ${what} only applies to ` +
+        'merchandise projects. Create one with:  sb project add "Name" --kind merchandise',
+    );
+  }
+}
+
+function assertStoryboard(project, what) {
+  if (projectKind(project) !== 'storyboard') {
+    throw new Error(
+      `"${project.name}" is a ${projectKind(project)} project — ${what} is for storyboard scenes. ` +
+        'Use --media / `sb media <item> add` instead.',
     );
   }
 }
@@ -543,7 +582,8 @@ async function cmdProjects() {
     const dot = p.id === state.projectId ? '●' : ' ';
     const num = String(i + 1).padStart(2, ' ');
     // Blank tag for storyboard keeps the original output shape.
-    const tag = projectKind(p) === 'social' ? '  [social]' : '';
+    const kind = projectKind(p);
+    const tag = kind === 'storyboard' ? '' : `  [${kind}]`;
     console.log(`${dot} ${num}. ${truncate(p.name, 30).padEnd(30, ' ')}  ${p.id.slice(0, 8)}${tag}`);
   });
 }
@@ -555,15 +595,20 @@ async function cmdProject(positional, flags) {
     if (!name) throw new Error('Provide a name:  sb project add "My Storyboard"');
     let kind = 'storyboard';
     if (flags.social === true) kind = 'social';
+    else if (flags.merch === true || flags.merchandise === true) kind = 'merchandise';
     else if (typeof flags.kind === 'string') {
       kind = flags.kind.toLowerCase().trim();
-      if (kind !== 'storyboard' && kind !== 'social') {
-        throw new Error(`Invalid --kind "${flags.kind}". Use storyboard or social.`);
+      if (kind === 'merch') kind = 'merchandise';
+      if (kind !== 'storyboard' && kind !== 'social' && kind !== 'merchandise') {
+        throw new Error(
+          `Invalid --kind "${flags.kind}". Use storyboard, social, or merchandise.`,
+        );
       }
     }
     const p = await createProject(name, kind);
     await setCurrentProject(p.id);
-    const label = kind === 'social' ? 'social project' : 'project';
+    const label =
+      kind === 'social' ? 'social project' : kind === 'merchandise' ? 'merchandise project' : 'project';
     console.log(`Created ${label} "${p.name}" (${p.id.slice(0, 8)}) and made it current.`);
     return;
   }
@@ -608,6 +653,42 @@ async function cmdList(flags) {
   const project = await resolveActiveProject(flags);
   announce(project);
   const scenes = await orderedScenes(project.id);
+
+  if (projectKind(project) === 'merchandise') {
+    if (scenes.length === 0) {
+      console.log('Board is empty. Add an item with: npm run sb -- add --name "Plushie"');
+      return;
+    }
+    const { data: mediaRows, error } = await db()
+      .from('scene_media')
+      .select('scene_id')
+      .in('scene_id', scenes.map((s) => s.id));
+    if (error) throw error;
+    const mediaCount = {};
+    (mediaRows ?? []).forEach((m) => {
+      mediaCount[m.scene_id] = (mediaCount[m.scene_id] ?? 0) + 1;
+    });
+
+    const money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toFixed(2)}`);
+
+    console.log(`${scenes.length} item(s):\n`);
+    scenes.forEach((s, i) => {
+      const num = String(i + 1).padStart(2, ' ');
+      const name = truncate(s.name || '(untitled)', 28).padEnd(28, ' ');
+      console.log(`${num}. ${name}  ${s.id.slice(0, 8)}`);
+      const parts = [
+        `stage: ${s.status ?? 'idea'}`,
+        `cost: ${money(s.cost)}`,
+        `price: ${money(s.sale_price)}`,
+        `images: ${mediaCount[s.id] ?? 0}`,
+      ];
+      if (s.dev_time) parts.push(`dev: ${s.dev_time}`);
+      console.log(`      ${parts.join(' · ')}`);
+      if (s.supplier_url) console.log(`      supplier: ${truncate(s.supplier_url, 80)}`);
+      if (s.description) console.log(`      desc: ${truncate(s.description, 90)}`);
+    });
+    return;
+  }
 
   if (projectKind(project) === 'social') {
     if (scenes.length === 0) {
@@ -663,15 +744,26 @@ async function cmdAdd(flags) {
   const project = await resolveActiveProject(flags);
   announce(project);
 
+  const kind = projectKind(project);
+  const merchFlagUsed =
+    typeof flags.supplier === 'string' ||
+    typeof flags.cost === 'string' ||
+    typeof flags.price === 'string' ||
+    typeof flags['dev-time'] === 'string';
   const socialFlagUsed =
     typeof flags.copy === 'string' ||
-    Array.isArray(flags.media) ||
     typeof flags.schedule === 'string' ||
-    typeof flags.platforms === 'string' ||
-    typeof flags.status === 'string';
-  if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--media/--schedule/--platforms/--status)');
+    typeof flags.platforms === 'string';
+  // --media and --status are shared by social and merchandise.
+  const mediaFlagUsed = Array.isArray(flags.media);
+
+  if (merchFlagUsed) assertMerch(project, 'that flag set (--supplier/--cost/--price/--dev-time)');
+  if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms)');
+  if (mediaFlagUsed && kind === 'storyboard') {
+    assertSocial(project, '--media');
+  }
   if (typeof flags.image === 'string') assertStoryboard(project, '--image');
-  const isSocial = projectKind(project) === 'social';
+  const isSocial = kind === 'social';
 
   const scenes = await orderedScenes(project.id);
   const nextOrder = scenes.length ? Math.max(...scenes.map((s) => s.order_index)) + 1 : 0;
@@ -687,9 +779,17 @@ async function cmdAdd(flags) {
   // Only include post columns when their flags were passed, so storyboard adds
   // keep working on a database that hasn't run the migration yet.
   if (typeof flags.copy === 'string') row.copy = flags.copy;
-  if (typeof flags.status === 'string') row.status = parseStatusFlag(flags.status);
+  if (typeof flags.status === 'string') row.status = parseStatusFlag(flags.status, kind);
   if (typeof flags.schedule === 'string') row.scheduled_at = parseScheduleFlag(flags.schedule);
   if (typeof flags.platforms === 'string') row.platforms = parsePlatformsFlag(flags.platforms);
+  // Merchandise sourcing fields.
+  if (typeof flags.supplier === 'string') row.supplier_url = flags.supplier.trim();
+  if (typeof flags.cost === 'string') row.cost = parseMoneyFlag(flags.cost, '--cost');
+  if (typeof flags.price === 'string') row.sale_price = parseMoneyFlag(flags.price, '--price');
+  if (typeof flags['dev-time'] === 'string') row.dev_time = flags['dev-time'];
+  // New merchandise rows start at the board's first stage, not the column
+  // default 'draft' (a social stage), so they don't land off-board.
+  if (kind === 'merchandise' && row.status === undefined) row.status = 'idea';
 
   const { data: scene, error } = await db().from('scenes').insert(row).select().single();
   if (error) throw error;
@@ -726,7 +826,7 @@ async function cmdAdd(flags) {
     }
   }
 
-  console.log(`Added ${isSocial ? 'post' : 'scene'} #${scenes.length + 1} (${scene.id.slice(0, 8)})`);
+  console.log(`Added ${rowNoun(kind)} #${scenes.length + 1} (${scene.id.slice(0, 8)})`);
   if (scene.name) console.log(`  name: ${scene.name}`);
   if (scene.copy) console.log(`  copy: ${truncate(scene.copy, 90)}`);
   if (typeof flags.status === 'string') console.log(`  status: ${scene.status}`);
@@ -742,34 +842,50 @@ async function cmdSet(positional, flags) {
   announce(project);
   const scene = await resolveScene(project.id, positional[0]);
 
+  const kind = projectKind(project);
+  const merchFlagUsed =
+    typeof flags.supplier === 'string' ||
+    typeof flags.cost === 'string' ||
+    typeof flags.price === 'string' ||
+    typeof flags['dev-time'] === 'string';
   const socialFlagUsed =
     typeof flags.copy === 'string' ||
     typeof flags.schedule === 'string' ||
-    typeof flags.platforms === 'string' ||
-    typeof flags.status === 'string';
-  if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms/--status)');
-  const isSocial = projectKind(project) === 'social';
+    typeof flags.platforms === 'string';
+
+  if (merchFlagUsed) assertMerch(project, 'that flag set (--supplier/--cost/--price/--dev-time)');
+  if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms)');
+  if (typeof flags.status === 'string' && kind === 'storyboard') {
+    assertSocial(project, '--status');
+  }
+  const isSocial = kind === 'social';
 
   const patch = {};
   if (typeof flags.name === 'string') patch.name = flags.name;
   if (typeof flags.desc === 'string') patch.description = flags.desc;
   if (typeof flags.prompt === 'string') patch.prompt = flags.prompt;
   if (typeof flags.copy === 'string') patch.copy = flags.copy;
-  if (typeof flags.status === 'string') patch.status = parseStatusFlag(flags.status);
+  if (typeof flags.status === 'string') patch.status = parseStatusFlag(flags.status, kind);
   if (typeof flags.schedule === 'string') patch.scheduled_at = parseScheduleFlag(flags.schedule);
   if (typeof flags.platforms === 'string') patch.platforms = parsePlatformsFlag(flags.platforms);
+  if (typeof flags.supplier === 'string') patch.supplier_url = flags.supplier.trim();
+  if (typeof flags.cost === 'string') patch.cost = parseMoneyFlag(flags.cost, '--cost');
+  if (typeof flags.price === 'string') patch.sale_price = parseMoneyFlag(flags.price, '--price');
+  if (typeof flags['dev-time'] === 'string') patch.dev_time = flags['dev-time'];
   if (Object.keys(patch).length === 0) {
     throw new Error(
-      isSocial
-        ? 'Nothing to update. Pass --name, --desc, --prompt, --copy, --status, --schedule, and/or --platforms.'
-        : 'Nothing to update. Pass --name, --desc, and/or --prompt.',
+      kind === 'merchandise'
+        ? 'Nothing to update. Pass --name, --desc, --status, --supplier, --cost, --price, and/or --dev-time.'
+        : isSocial
+          ? 'Nothing to update. Pass --name, --desc, --prompt, --copy, --status, --schedule, and/or --platforms.'
+          : 'Nothing to update. Pass --name, --desc, and/or --prompt.',
     );
   }
   patch.updated_at = new Date().toISOString();
   const { error } = await db().from('scenes').update(patch).eq('id', scene.id);
   if (error) throw error;
   console.log(
-    `Updated ${isSocial ? 'post' : 'scene'} ${scene.id.slice(0, 8)} (${Object.keys(patch)
+    `Updated ${rowNoun(kind)} ${scene.id.slice(0, 8)} (${Object.keys(patch)
       .filter((k) => k !== 'updated_at')
       .join(', ')})`,
   );
@@ -979,13 +1095,13 @@ async function cmdScript(positional, flags) {
 function printHelp() {
   console.log(
     [
-      'sb — Storyboard agent CLI (storyboards + social-post pipelines)',
+      'sb — Storyboard agent CLI (storyboards + social pipelines + merchandise)',
       '',
       'Usage: npm run sb -- <command> [args]',
       '',
       'Project commands:',
       '  projects                               List your projects (● = current)',
-      '  project add <name…> [--social]         Create a project + make it current',
+      '  project add <name…> [--social|--merch] Create a project + make it current',
       '  project use <project>                  Set the current project',
       '  project rename <project> <name…>       Rename a project',
       '  project rm <project>                   Delete a project (+ its scenes/media)',
@@ -995,8 +1111,10 @@ function printHelp() {
       '  add [--name N] [--desc D] [--prompt P] [--image PATH|URL]',
       '      [--copy TEXT] [--media PATH|URL]… [--schedule "YYYY-MM-DD[ HH:MM]"]',
       '      [--platforms a,b,c] [--status S]',
+      '      [--supplier URL] [--cost N] [--price N] [--dev-time TEXT]  (merch)',
       '  set <scene> [--name N] [--desc D] [--prompt P] [--copy TEXT]',
       '      [--schedule …|none] [--platforms …|none] [--status S]',
+      '      [--supplier URL] [--cost N|none] [--price N|none] [--dev-time TEXT]',
       '  image <scene> <PATH|URL>               Upload/replace a storyboard scene image',
       '  media <post> [list]                    List a post’s media',
       '  media <post> add <PATH|URL>…           Append images/videos to a post',
@@ -1011,7 +1129,9 @@ function printHelp() {
       '<scene>/<post> = 1-based index from `list`, a full UUID, or an id prefix.',
       '--project <project> scopes a scene command to a project for one run.',
       '--image/--media accept a local file path or an http(s) URL. --media repeats.',
-      `--status is one of: ${STATUSES.join(', ')}.`,
+      `--status (social) is one of: ${STATUSES.join(', ')}.`,
+      `--status (merchandise) is one of: ${MERCH_STATUSES.join(', ')}.`,
+      '--cost/--price take a number; "none" clears back to unknown.',
       '--schedule is local time; "none" clears it (same for --platforms).',
       'Platform aliases normalize (twitter→x, ig→instagram, …); unknowns warn.',
       'Videos: prefer .mp4 (H.264) ≤50MB (Supabase per-file cap; raiseable).',

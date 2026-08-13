@@ -1,9 +1,53 @@
-/** Which UI a project gets: a film storyboard or a social-post pipeline. */
-export type ProjectKind = 'storyboard' | 'social';
+/**
+ * Which UI a project gets: a film storyboard, a social-post pipeline, or a
+ * merchandise tracking board.
+ */
+export type ProjectKind = 'storyboard' | 'social' | 'merchandise';
 
 /** Pipeline stages for a social post. Mirrors the DB CHECK on scenes.status. */
 export const POST_STATUSES = ['idea', 'draft', 'ready', 'scheduled', 'posted'] as const;
 export type PostStatus = (typeof POST_STATUSES)[number];
+
+/**
+ * Stages for a merchandise item, in board order. `status` is one shared column
+ * across project kinds, so the DB CHECK is the union of these and POST_STATUSES
+ * — 'idea' and 'ready' are deliberately common to both.
+ */
+export const MERCH_STATUSES = ['idea', 'sourcing', 'quoted', 'sample', 'ready'] as const;
+export type MerchStatus = (typeof MERCH_STATUSES)[number];
+
+/** Every value `scenes.status` can hold, across all project kinds. */
+export type SceneStatus = PostStatus | MerchStatus;
+
+/**
+ * Narrow a stored status to a social one. A row carrying a merchandise stage
+ * (or anything unrecognised) falls back to 'draft' rather than rendering a
+ * label the social UI has no meaning for.
+ */
+export function asPostStatus(status: SceneStatus | string): PostStatus {
+  return (POST_STATUSES as readonly string[]).includes(status)
+    ? (status as PostStatus)
+    : 'draft';
+}
+
+/**
+ * Narrow a stored status to a merchandise stage, defaulting to 'idea' so an
+ * item never disappears from the board.
+ */
+export function asMerchStatus(status: SceneStatus | string): MerchStatus {
+  return (MERCH_STATUSES as readonly string[]).includes(status)
+    ? (status as MerchStatus)
+    : 'idea';
+}
+
+/** Human labels for the merchandise board columns. */
+export const MERCH_STATUS_LABELS: Record<MerchStatus, string> = {
+  idea: 'Idea',
+  sourcing: 'Sourcing',
+  quoted: 'Quoted',
+  sample: 'Sample',
+  ready: 'Ready',
+};
 
 export type MediaKind = 'image' | 'video';
 
@@ -39,14 +83,37 @@ export interface Scene {
   image_path: string | null;
   /** Social: the post's caption/body text ('' on storyboard rows). */
   copy: string;
-  /** Social: pipeline stage (storyboard rows sit at the 'draft' default). */
-  status: PostStatus;
+  /**
+   * Stage. One shared column across kinds, so the type is the union: social
+   * rows hold a PostStatus, merchandise rows a MerchStatus, and storyboard
+   * rows sit at the 'draft' default. Narrow before use.
+   */
+  status: SceneStatus;
   /** Social: when the post should go out (ISO timestamptz), or null = backlog. */
   scheduled_at: string | null;
   /** Social: target platform slugs (e.g. 'instagram', 'linkedin'). */
   platforms: string[];
+  /** Merchandise: link to the company that manufactures the item ('' if none). */
+  supplier_url: string;
+  /** Merchandise: unit cost to produce. null = not researched yet, not zero. */
+  cost: number | null;
+  /** Merchandise: intended retail price. null = not decided yet, not zero. */
+  sale_price: number | null;
+  /** Merchandise: free-text lead time, e.g. '4–6 weeks'. */
+  dev_time: string;
   created_at: string;
   updated_at: string;
+}
+
+/** The merchandise fields an item editor can write. */
+export interface MerchFields {
+  name: string;
+  description: string;
+  status: MerchStatus;
+  supplier_url: string;
+  cost: number | null;
+  sale_price: number | null;
+  dev_time: string;
 }
 
 /** An ordered media item (image or video) attached to a social post. */

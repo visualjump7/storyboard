@@ -1,4 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
+import { MerchCatalog } from '@/components/MerchCatalog';
 import { PostPipeline } from '@/components/PostPipeline';
 import { Storyboard } from '@/components/Storyboard';
 import { fetchProject } from '@/lib/projects';
@@ -19,11 +20,10 @@ export default async function ProjectPage({ params }: { params: { projectId: str
   const project = await fetchProject(supabase, params.projectId);
   if (!project) notFound();
 
-  // Same route, two surfaces: social projects get the post pipeline, film
-  // projects keep the original storyboard untouched.
-  return project.kind === 'social' ? (
-    <PostPipeline userId={user.id} project={project} />
-  ) : (
-    <Storyboard userId={user.id} project={project} />
-  );
+  // Same route, three surfaces: social projects get the post pipeline,
+  // merchandise gets the tracking board, and film projects keep the original
+  // storyboard untouched.
+  if (project.kind === 'social') return <PostPipeline userId={user.id} project={project} />;
+  if (project.kind === 'merchandise') return <MerchCatalog userId={user.id} project={project} />;
+  return <Storyboard userId={user.id} project={project} />;
 }

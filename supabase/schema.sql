@@ -21,7 +21,7 @@ create table if not exists public.projects (
   name        text not null default 'Untitled project',
   description text not null default '',
   kind        text not null default 'storyboard'
-              check (kind in ('storyboard', 'social')),
+              check (kind in ('storyboard', 'social', 'merchandise')),
   share_token uuid not null default gen_random_uuid(),
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
@@ -65,10 +65,16 @@ create table if not exists public.scenes (
   prompt       text not null default '',
   image_path   text,                      -- storyboard image path, or null
   copy         text not null default '',  -- social: the post's caption/body text
+  -- One shared stage column: the CHECK is the union of every kind's stages.
   status       text not null default 'draft'
-               check (status in ('idea', 'draft', 'ready', 'scheduled', 'posted')),
+               check (status in ('idea', 'draft', 'ready', 'scheduled', 'posted',
+                                 'sourcing', 'quoted', 'sample')),
   scheduled_at timestamptz,               -- social: when the post should go out
   platforms    text[] not null default '{}',  -- social: target platform slugs
+  supplier_url text not null default '',  -- merch: manufacturer link
+  cost         numeric(12,2),             -- merch: unit cost (null = unknown)
+  sale_price   numeric(12,2),             -- merch: retail price (null = unknown)
+  dev_time     text not null default '',  -- merch: lead time, e.g. '4-6 weeks'
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );

@@ -28,6 +28,11 @@ export interface SharedScene {
   scheduled_at: string | null;
   platforms: string[];
   image_path: string | null;
+  /** Merchandise: sourcing detail. Anyone with the link can read these. */
+  supplier_url: string;
+  cost: number | null;
+  sale_price: number | null;
+  dev_time: string;
   created_at: string;
   media: SharedMedia[];
 }
@@ -62,7 +67,7 @@ export async function fetchSharedProject(token: string): Promise<SharedProjectDa
   const { data: scenes, error: scenesError } = await admin
     .from('scenes')
     .select(
-      'id, order_index, name, description, copy, status, scheduled_at, platforms, image_path, created_at',
+      'id, order_index, name, description, copy, status, scheduled_at, platforms, image_path, supplier_url, cost, sale_price, dev_time, created_at',
     )
     .eq('project_id', project.id)
     .order('order_index', { ascending: true });

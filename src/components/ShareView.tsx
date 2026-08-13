@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import type { SharedMedia, SharedScene } from '@/lib/share';
-import type { ProjectKind } from '@/lib/types';
+import { MERCH_STATUS_LABELS, type ProjectKind, type Scene } from '@/lib/types';
+import { formatMoney, groupByStatus, marginPercent } from '@/lib/merch';
 import { splitPipeline, formatScheduleTime } from '@/lib/pipeline';
 import { PlatformChips, StatusBadge } from './PostBadges';
 import { ChevronLeft, ChevronRight, ImagePlaceholder, Play } from './icons';
@@ -27,10 +28,99 @@ export function ShareView({ kind, scenes, urls }: ShareViewProps) {
       </div>
     );
   }
-  return kind === 'social' ? (
-    <SocialShare scenes={scenes} urls={urls} />
-  ) : (
-    <StoryboardShare scenes={scenes} urls={urls} />
+  if (kind === 'social') return <SocialShare scenes={scenes} urls={urls} />;
+  if (kind === 'merchandise') return <MerchShare scenes={scenes} urls={urls} />;
+  return <StoryboardShare scenes={scenes} urls={urls} />;
+}
+
+// ---------------------------------------------------------------------------
+// Merchandise: stage columns, cover image, and the numbers
+// ---------------------------------------------------------------------------
+
+function MerchShare({ scenes, urls }: { scenes: SharedScene[]; urls: Record<string, string> }) {
+  const columns = useMemo(() => groupByStatus(scenes as unknown as Scene[]), [scenes]);
+
+  return (
+    <div className="mx-auto max-w-[1180px] overflow-x-auto px-[26px] pb-24 pt-8">
+      <div className="flex items-start gap-5">
+        {columns.map((column) => (
+          <section key={column.status} className="flex w-[248px] flex-none flex-col">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-muted">
+                {MERCH_STATUS_LABELS[column.status]}
+              </span>
+              <span className="text-[11px] text-[#54545e]">{column.items.length}</span>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {column.items.length === 0 && (
+                <p className="rounded-xl border border-dashed border-[#2a2a32] px-3 py-6 text-center text-[12px] text-[#4a4a54]">
+                  Nothing here
+                </p>
+              )}
+              {column.items.map((raw) => {
+                const item = raw as unknown as SharedScene;
+                const cover = item.media.find((m) => m.kind === 'image');
+                const coverUrl = cover ? urls[cover.path] : undefined;
+                const pct = marginPercent(item);
+                return (
+                  <div
+                    key={item.id}
+                    className="overflow-hidden rounded-xl border border-line bg-card shadow-card"
+                  >
+                    <div className="relative aspect-square w-full overflow-hidden bg-[#15151a]">
+                      {coverUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={coverUrl}
+                          alt={item.name || 'Merchandise item'}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-muted">
+                          <ImagePlaceholder size={26} />
+                        </div>
+                      )}
+                      {item.media.length > 1 && (
+                        <span className="absolute bottom-2 right-2 rounded bg-[rgba(6,6,8,0.78)] px-1.5 py-0.5 text-[10.5px] text-[#c4c4cc]">
+                          +{item.media.length - 1}
+                        </span>
+                      )}
+                    </div>
+                    <div className="px-3 py-2.5">
+                      <div className="truncate text-[13px] font-medium text-bright">
+                        {item.name || 'Untitled item'}
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-2 text-[12px]">
+                        <span className="text-muted">{formatMoney(item.cost)}</span>
+                        <span className="text-[#3a3a44]">→</span>
+                        <span className="text-ink">{formatMoney(item.sale_price)}</span>
+                        {pct !== null && (
+                          <span
+                            className={`ml-auto text-[11.5px] ${pct >= 0 ? 'text-[#6ec08a]' : 'text-[#c96a6a]'}`}
+                          >
+                            {pct >= 0 ? '+' : ''}
+                            {pct.toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
+                      {item.dev_time && (
+                        <div className="mt-1 truncate text-[11.5px] text-muted">{item.dev_time}</div>
+                      )}
+                      {item.description && (
+                        <p className="mt-1.5 line-clamp-3 text-[12px] leading-relaxed text-muted">
+                          {item.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+    </div>
   );
 }
 
