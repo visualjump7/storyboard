@@ -22,6 +22,9 @@ npm-debug.log*
 # sb CLI's remembered current project (per-machine)
 .sb-state.json
 
+# Cowork service-role credentials (local only — never commit)
+.env.cowork.local
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
