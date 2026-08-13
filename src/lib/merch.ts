@@ -39,6 +39,37 @@ export function groupByStatus(items: Scene[]): MerchColumn[] {
   return MERCH_STATUSES.map((status) => ({ status, items: buckets.get(status)! }));
 }
 
+/**
+ * Move an item to a stage at a position within that column, returning the
+ * whole board renumbered in reading order (column by column).
+ *
+ * order_index is global across the project rather than per column, so the flat
+ * renumbering is what keeps the stored order authoritative and identical to
+ * what the board shows. Returns the input unchanged when the id isn't found.
+ */
+export function moveItem(
+  items: Scene[],
+  itemId: string,
+  toStatus: MerchStatus,
+  toIndex: number,
+): Scene[] {
+  const moving = items.find((i) => i.id === itemId);
+  if (!moving) return items;
+
+  const columns = groupByStatus(items).map((c) => ({
+    status: c.status,
+    items: c.items.filter((i) => i.id !== itemId),
+  }));
+
+  const target = columns.find((c) => c.status === toStatus);
+  if (!target) return items;
+
+  const at = Math.max(0, Math.min(toIndex, target.items.length));
+  target.items.splice(at, 0, { ...moving, status: toStatus });
+
+  return columns.flatMap((c) => c.items).map((item, index) => ({ ...item, order_index: index }));
+}
+
 /** Unit margin, or null when either side of the sum is still unknown. */
 export function margin(item: Pick<Scene, 'cost' | 'sale_price'>): number | null {
   if (item.cost === null || item.sale_price === null) return null;

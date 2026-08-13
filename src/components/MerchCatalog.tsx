@@ -5,8 +5,13 @@ import { useRouter } from 'next/navigation';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { useSignedUrls } from '@/hooks/useSignedUrls';
 import { createClient } from '@/lib/supabase/client';
-import { createScene, deleteScene as deleteSceneRow, fetchScenes } from '@/lib/scenes';
-import { groupByStatus, updateMerchFields } from '@/lib/merch';
+import {
+  createScene,
+  deleteScene as deleteSceneRow,
+  fetchScenes,
+  persistOrder,
+} from '@/lib/scenes';
+import { groupByStatus, moveItem, updateMerchFields } from '@/lib/merch';
 import {
   addSceneMedia,
   fetchMediaForScenes,
@@ -14,7 +19,7 @@ import {
   removeSceneMediaItem,
 } from '@/lib/media';
 import { fetchProjects } from '@/lib/projects';
-import type { MerchFields, Project, Scene, SceneMedia } from '@/lib/types';
+import type { MerchFields, MerchStatus, Project, Scene, SceneMedia } from '@/lib/types';
 import { MerchBoard } from './MerchBoard';
 import { MerchDetail } from './MerchDetail';
 import { PipelineToolbar } from './PipelineToolbar';
@@ -141,6 +146,35 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
       );
     },
     [supabase],
+  );
+
+  /**
+   * Drag a card to a stage. order_index is global across the project, so the
+   * whole board is renumbered in reading order (column by column) and saved in
+   * one upsert — that keeps the stored order authoritative and matches what
+   * the board actually shows.
+   */
+  const handleMoveItem = useCallback(
+    (itemId: string, toStatus: MerchStatus, toIndex: number) => {
+      const current = items ?? [];
+      const moving = current.find((i) => i.id === itemId);
+      if (!moving) return;
+
+      const flat = moveItem(current, itemId, toStatus, toIndex);
+      if (flat === current) return;
+
+      setItems(flat);
+
+      if (moving.status !== toStatus) {
+        void updateMerchFields(supabase, itemId, { status: toStatus }).catch((e) =>
+          setError((e as Error)?.message ?? 'Failed to move item.'),
+        );
+      }
+      void persistOrder(supabase, flat).catch((e) =>
+        setError((e as Error)?.message ?? 'Failed to save order.'),
+      );
+    },
+    [supabase, items],
   );
 
   const handleAddMedia = useCallback(
@@ -308,6 +342,7 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
             mediaUrls={mediaUrls}
             onOpenItem={setDetailId}
             onAddItem={handleAddItem}
+            onMoveItem={handleMoveItem}
           />
         )}
         {notesOpen && (

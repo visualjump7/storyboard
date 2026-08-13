@@ -508,6 +508,19 @@ function rowNoun(kind) {
   return 'scene';
 }
 
+/**
+ * Multi-media rows (scene_media) back both social posts and merchandise
+ * items; only storyboard scenes use the single image_path instead.
+ */
+function assertHasMedia(project, what) {
+  if (projectKind(project) === 'storyboard') {
+    throw new Error(
+      `"${project.name}" is a storyboard project — ${what} needs a social or ` +
+        'merchandise project. Storyboard scenes take a single --image instead.',
+    );
+  }
+}
+
 function assertSocial(project, what) {
   if (projectKind(project) !== 'social') {
     throw new Error(
@@ -759,9 +772,7 @@ async function cmdAdd(flags) {
 
   if (merchFlagUsed) assertMerch(project, 'that flag set (--supplier/--cost/--price/--dev-time)');
   if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms)');
-  if (mediaFlagUsed && kind === 'storyboard') {
-    assertSocial(project, '--media');
-  }
+  if (mediaFlagUsed) assertHasMedia(project, '--media');
   if (typeof flags.image === 'string') assertStoryboard(project, '--image');
   const isSocial = kind === 'social';
 
@@ -895,17 +906,18 @@ async function cmdMedia(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
   announce(project);
-  assertSocial(project, 'the media command');
+  assertHasMedia(project, 'the media command');
+  const noun = rowNoun(projectKind(project));
   const scene = await resolveScene(project.id, positional[0]);
   const sub = positional[1] ?? 'list';
 
   if (sub === 'list') {
     const media = await fetchSceneMediaRows(scene.id);
     if (media.length === 0) {
-      console.log(`No media on post ${scene.id.slice(0, 8)}. Add some: sb media ${scene.id.slice(0, 8)} add <path|url>`);
+      console.log(`No media on ${noun} ${scene.id.slice(0, 8)}. Add some: sb media ${scene.id.slice(0, 8)} add <path|url>`);
       return;
     }
-    console.log(`${media.length} media item(s) on post ${scene.id.slice(0, 8)}:\n`);
+    console.log(`${media.length} media item(s) on ${noun} ${scene.id.slice(0, 8)}:\n`);
     media.forEach((m, i) => {
       const num = String(i + 1).padStart(2, ' ');
       const ext = (m.path.split('.').pop() || '').toLowerCase();
@@ -936,7 +948,7 @@ async function cmdMedia(positional, flags) {
         );
       }
     }
-    console.log(`Added ${added} media item(s) to post ${scene.id.slice(0, 8)} ✓`);
+    console.log(`Added ${added} media item(s) to ${noun} ${scene.id.slice(0, 8)} ✓`);
     return;
   }
 
@@ -957,7 +969,7 @@ async function cmdMedia(positional, flags) {
       const { error: e2 } = await db().from('scene_media').upsert(rows, { onConflict: 'id' });
       if (e2) throw e2;
     }
-    console.log(`Removed media #${n} (${item.kind}) from post ${scene.id.slice(0, 8)}`);
+    console.log(`Removed media #${n} (${item.kind}) from ${noun} ${scene.id.slice(0, 8)}`);
     return;
   }
 
@@ -975,7 +987,7 @@ async function cmdMedia(positional, flags) {
     const rows = spec.map((idx, i) => ({ ...media[idx - 1], position: i }));
     const { error } = await db().from('scene_media').upsert(rows, { onConflict: 'id' });
     if (error) throw error;
-    console.log(`Reordered ${media.length} media item(s) on post ${scene.id.slice(0, 8)} ✓`);
+    console.log(`Reordered ${media.length} media item(s) on ${noun} ${scene.id.slice(0, 8)} ✓`);
     return;
   }
 
