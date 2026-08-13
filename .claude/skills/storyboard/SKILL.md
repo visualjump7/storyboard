@@ -15,34 +15,45 @@ Projects come in three kinds:
 - **social** — post pipelines: posts with copy, multiple media (images/video),
   a schedule, a status (idea/draft/ready/scheduled/posted), and platforms.
   Nothing publishes from here; it's the planning/review surface.
-- **merchandise** — product tracking: items with images, a supplier link, unit
-  cost, sale price, development time, and a stage
-  (idea/sourcing/quoted/sample/ready). Margin is derived, never stored.
+- **merchandise** — product tracking. A product has images, a concept
+  description, a sale price, a development time, and a stage
+  (concept/sourcing/quotes/orders/ready). Underneath it sit **many suppliers**
+  (each optionally carrying a quote) and **many orders**. Margin is derived
+  from the cheapest quote against the sale price — never stored.
 
 ## Merchandise: research is the job
 
-On a merchandise board the user typically uploads pictures first and leaves the
-numbers blank, then asks you to fill them in. That means: find a real
-manufacturer for the item, get a realistic unit cost and lead time, propose a
-sale price, and write it back.
+The user typically uploads pictures first and leaves everything else blank,
+then asks you to fill it in. That means: find real manufacturers, get real unit
+costs, MOQs and lead times, propose a sale price, and write it all back.
 
 ```
 npm run sb -- add --name "Luna Plushie" --desc "12in soft plush, embroidered eyes"
-npm run sb -- set 1 --supplier "https://…" --cost 8.40 --price 29.99 \
-  --dev-time "5-7 weeks" --status quoted
+npm run sb -- quote 1 add --supplier "Shenzhen Plush Co" --contact "amy@…" \
+  --url "https://…" --cost 8.40 --moq 250 --lead-time "5-7 weeks" \
+  --notes "Minky fabric, PP cotton fill; sample $45"
+npm run sb -- quote 1 add --supplier "Vietnam Toys Ltd" --cost 6.95 --moq 500
+npm run sb -- set 1 --price 29.99 --dev-time "5-7 weeks" --status quotes
+npm run sb -- order 1 add --supplier "Vietnam Toys Ltd" --qty 500 --cost 6.95 \
+  --ordered 2026-08-13 --due 2026-10-10 --status in_production
 ```
 
 Rules for this work:
-- **Never invent a supplier, price, or lead time.** Research it and cite where
-  the figure came from in the item description. If you can't find a real
-  number, leave the field empty and say so — an empty field reads as "unknown",
-  a made-up one reads as researched.
-- Move the stage to match what you actually established: `sourcing` once you've
-  found candidate manufacturers, `quoted` only when you have a real cost.
-- `--cost none` / `--price none` clears a value back to unknown.
-- Put the reasoning (MOQ, materials, why this supplier) in `--desc`; there is
-  no separate notes field per item. Board-wide notes live in `script set`.
-- Merchandise items use `--media` for pictures, not `--image`.
+- **Never invent a supplier, price, MOQ, or lead time.** Research it, and put
+  where the figure came from in that supplier's `--notes`. If you can't find a
+  real number, leave it empty and say so — an empty field reads as "unknown", a
+  made-up one reads as researched.
+- **Add several suppliers, not one.** The point of the board is comparison; a
+  low unit cost often hides a high MOQ.
+- A supplier with no `--cost` is a sourcing lead. Add the cost when you have a
+  real quote — that is exactly the sourcing → quotes progression.
+- Move the product's stage to match what you actually established. Don't set
+  `orders` unless an order genuinely exists.
+- `--cost none` / `--moq none` / `--price none` clear a value back to unknown.
+- Products use `--media` for pictures, not `--image`.
+- `npm run sb -- list` on a merchandise project prints every product with its
+  quotes (q1, q2…) and orders (o1, o2…) — the numbers are what `quote 1 set 2`
+  and `order 1 rm 1` refer to.
 
 ## Projects come first
 

@@ -68,13 +68,11 @@ create table if not exists public.scenes (
   -- One shared stage column: the CHECK is the union of every kind's stages.
   status       text not null default 'draft'
                check (status in ('idea', 'draft', 'ready', 'scheduled', 'posted',
-                                 'sourcing', 'quoted', 'sample')),
+                                 'concept', 'sourcing', 'quotes', 'orders')),
   scheduled_at timestamptz,               -- social: when the post should go out
   platforms    text[] not null default '{}',  -- social: target platform slugs
-  supplier_url text not null default '',  -- merch: manufacturer link
-  cost         numeric(12,2),             -- merch: unit cost (null = unknown)
   sale_price   numeric(12,2),             -- merch: retail price (null = unknown)
-  dev_time     text not null default '',  -- merch: lead time, e.g. '4-6 weeks'
+  dev_time     text not null default '',  -- merch: dev time, e.g. '4-6 weeks'
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
@@ -116,6 +114,42 @@ create table if not exists public.scene_media (
 
 create index if not exists scene_media_scene_position_idx
   on public.scene_media (scene_id, position);
+
+-- Merchandise: many suppliers and many orders per product. See
+-- migrations/0005_merch_quotes_orders.sql for the full definitions,
+-- RLS policies, and replica identity.
+create table if not exists public.merch_quotes (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  scene_id   uuid not null references public.scenes (id) on delete cascade,
+  supplier   text not null default '',
+  contact    text not null default '',
+  url        text not null default '',
+  unit_cost  numeric(12,2),             -- null = a sourcing lead, not a quote
+  moq        int,
+  lead_time  text not null default '',
+  notes      text not null default '',
+  position   int  not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.merch_orders (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  scene_id    uuid not null references public.scenes (id) on delete cascade,
+  supplier    text not null default '',
+  quantity    int,
+  unit_cost   numeric(12,2),
+  ordered_at  date,
+  expected_at date,
+  status      text not null default 'placed'
+              check (status in ('placed','in_production','shipped','received','cancelled')),
+  notes       text not null default '',
+  position    int  not null default 0,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
 
 alter table public.scene_media enable row level security;
 

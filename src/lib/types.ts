@@ -9,11 +9,11 @@ export const POST_STATUSES = ['idea', 'draft', 'ready', 'scheduled', 'posted'] a
 export type PostStatus = (typeof POST_STATUSES)[number];
 
 /**
- * Stages for a merchandise item, in board order. `status` is one shared column
- * across project kinds, so the DB CHECK is the union of these and POST_STATUSES
- * — 'idea' and 'ready' are deliberately common to both.
+ * Stages a merchandise product moves through. `status` is one shared column
+ * across project kinds, so the DB CHECK is the union of these and
+ * POST_STATUSES — 'ready' is deliberately common to both.
  */
-export const MERCH_STATUSES = ['idea', 'sourcing', 'quoted', 'sample', 'ready'] as const;
+export const MERCH_STATUSES = ['concept', 'sourcing', 'quotes', 'orders', 'ready'] as const;
 export type MerchStatus = (typeof MERCH_STATUSES)[number];
 
 /** Every value `scenes.status` can hold, across all project kinds. */
@@ -31,21 +31,21 @@ export function asPostStatus(status: SceneStatus | string): PostStatus {
 }
 
 /**
- * Narrow a stored status to a merchandise stage, defaulting to 'idea' so an
- * item never disappears from the board.
+ * Narrow a stored status to a merchandise stage, defaulting to 'concept' so a
+ * product never falls off the list.
  */
 export function asMerchStatus(status: SceneStatus | string): MerchStatus {
   return (MERCH_STATUSES as readonly string[]).includes(status)
     ? (status as MerchStatus)
-    : 'idea';
+    : 'concept';
 }
 
-/** Human labels for the merchandise board columns. */
+/** Human labels for the merchandise stages. */
 export const MERCH_STATUS_LABELS: Record<MerchStatus, string> = {
-  idea: 'Idea',
+  concept: 'Merchandise concept',
   sourcing: 'Sourcing',
-  quoted: 'Quoted',
-  sample: 'Sample',
+  quotes: 'Quotes',
+  orders: 'Orders',
   ready: 'Ready',
 };
 
@@ -93,28 +93,90 @@ export interface Scene {
   scheduled_at: string | null;
   /** Social: target platform slugs (e.g. 'instagram', 'linkedin'). */
   platforms: string[];
-  /** Merchandise: link to the company that manufactures the item ('' if none). */
-  supplier_url: string;
-  /** Merchandise: unit cost to produce. null = not researched yet, not zero. */
-  cost: number | null;
   /** Merchandise: intended retail price. null = not decided yet, not zero. */
   sale_price: number | null;
-  /** Merchandise: free-text lead time, e.g. '4–6 weeks'. */
+  /** Merchandise: overall development time, e.g. '4–6 weeks'. */
   dev_time: string;
   created_at: string;
   updated_at: string;
 }
 
-/** The merchandise fields an item editor can write. */
+/** The product-level fields a merchandise row can write. */
 export interface MerchFields {
   name: string;
   description: string;
   status: MerchStatus;
-  supplier_url: string;
-  cost: number | null;
   sale_price: number | null;
   dev_time: string;
 }
+
+/**
+ * A potential supplier for a product. A row with no `unit_cost` is a sourcing
+ * lead; filling the cost in makes it a quote. Nullable numbers keep "not
+ * quoted yet" distinct from a genuine 0.
+ */
+export interface MerchQuote {
+  id: string;
+  user_id: string;
+  scene_id: string;
+  supplier: string;
+  /** Name / email / phone — free text. */
+  contact: string;
+  url: string;
+  unit_cost: number | null;
+  /** Minimum order quantity. */
+  moq: number | null;
+  lead_time: string;
+  notes: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type MerchQuoteFields = Omit<
+  MerchQuote,
+  'id' | 'user_id' | 'scene_id' | 'created_at' | 'updated_at'
+>;
+
+export const ORDER_STATUSES = [
+  'placed',
+  'in_production',
+  'shipped',
+  'received',
+  'cancelled',
+] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  placed: 'Placed',
+  in_production: 'In production',
+  shipped: 'Shipped',
+  received: 'Received',
+  cancelled: 'Cancelled',
+};
+
+/** An order placed against a product. The line total is derived, never stored. */
+export interface MerchOrder {
+  id: string;
+  user_id: string;
+  scene_id: string;
+  supplier: string;
+  quantity: number | null;
+  unit_cost: number | null;
+  /** 'YYYY-MM-DD' or null. */
+  ordered_at: string | null;
+  expected_at: string | null;
+  status: OrderStatus;
+  notes: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type MerchOrderFields = Omit<
+  MerchOrder,
+  'id' | 'user_id' | 'scene_id' | 'created_at' | 'updated_at'
+>;
 
 /** An ordered media item (image or video) attached to a social post. */
 export interface SceneMedia {

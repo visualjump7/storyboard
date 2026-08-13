@@ -5,13 +5,18 @@ import { useRouter } from 'next/navigation';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { useSignedUrls } from '@/hooks/useSignedUrls';
 import { createClient } from '@/lib/supabase/client';
+import { createScene, deleteScene as deleteSceneRow, fetchScenes } from '@/lib/scenes';
+import { updateMerchFields } from '@/lib/merch';
 import {
-  createScene,
-  deleteScene as deleteSceneRow,
-  fetchScenes,
-  persistOrder,
-} from '@/lib/scenes';
-import { groupByStatus, moveItem, updateMerchFields } from '@/lib/merch';
+  addOrder,
+  addQuote,
+  fetchOrdersForScenes,
+  fetchQuotesForScenes,
+  removeOrder,
+  removeQuote,
+  updateOrder,
+  updateQuote,
+} from '@/lib/merchLines';
 import {
   addSceneMedia,
   fetchMediaForScenes,
@@ -19,10 +24,19 @@ import {
   removeSceneMediaItem,
 } from '@/lib/media';
 import { fetchProjects } from '@/lib/projects';
-import type { MerchFields, MerchStatus, Project, Scene, SceneMedia } from '@/lib/types';
-import { MerchBoard } from './MerchBoard';
-import { MerchDetail } from './MerchDetail';
+import type {
+  MerchFields,
+  MerchOrder,
+  MerchOrderFields,
+  MerchQuote,
+  MerchQuoteFields,
+  Project,
+  Scene,
+  SceneMedia,
+} from '@/lib/types';
+import { MerchRow } from './MerchRow';
 import { PipelineToolbar } from './PipelineToolbar';
+import { Plus } from './icons';
 import { ScriptPanel } from './ScriptPanel';
 
 type MerchCatalogProps = {
@@ -31,40 +45,50 @@ type MerchCatalogProps = {
 };
 
 /**
- * The merchandise tracking board. Mirrors PostPipeline: items are `scenes`
- * rows with their pictures in `scene_media`, so uploads, deletion sweeps and
- * the share page all reuse the existing machinery.
+ * The merchandise tracking list. One expandable row per product; its
+ * suppliers/quotes and orders are child rows in merch_quotes / merch_orders.
+ * Products themselves are `scenes` rows with pictures in `scene_media`, so
+ * uploads, the deletion sweep and share links reuse existing machinery.
  */
 export function MerchCatalog({ userId, project }: MerchCatalogProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
   const [items, setItems] = useState<Scene[] | null>(null); // null = loading
-  const [mediaMap, setMediaMap] = useState<Record<string, SceneMedia[]> | null>(null);
+  const [mediaMap, setMediaMap] = useState<Record<string, SceneMedia[]>>({});
+  const [quoteMap, setQuoteMap] = useState<Record<string, MerchQuote[]>>({});
+  const [orderMap, setOrderMap] = useState<Record<string, MerchOrder[]>>({});
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [notesOpen, setNotesOpen] = useLocalStorage('merch:notesOpen', false);
 
-  // Load this project's items + media (re-runs if you switch projects).
+  // Load this project's products with their media, quotes and orders.
   useEffect(() => {
     let active = true;
     setItems(null);
-    setMediaMap(null);
-    setDetailId(null);
+    setExpandedId(null);
     fetchScenes(supabase, project.id)
       .then(async (rows) => {
         if (!active) return;
         setItems(rows);
-        const map = await fetchMediaForScenes(supabase, rows.map((r) => r.id));
-        if (active) setMediaMap(map);
+        const ids = rows.map((r) => r.id);
+        const [media, quotes, orders] = await Promise.all([
+          fetchMediaForScenes(supabase, ids),
+          fetchQuotesForScenes(supabase, ids),
+          fetchOrdersForScenes(supabase, ids),
+        ]);
+        if (!active) return;
+        setMediaMap(media);
+        setQuoteMap(quotes);
+        setOrderMap(orders);
       })
       .catch((e) => {
-        if (active) setError(e?.message ?? 'Failed to load items.');
+        if (active) setError(e?.message ?? 'Failed to load products.');
       });
     return () => {
       active = false;
@@ -86,7 +110,7 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
     };
   }, [supabase]);
 
-  // Live updates, so research Claude writes from the CLI lands without a reload.
+  // Live updates, so research written from the CLI lands without a reload.
   useEffect(() => {
     const channel = supabase
       .channel(`merch-items:${project.id}`)
@@ -115,149 +139,211 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
   }, [supabase, project.id]);
 
   const list = useMemo(() => items ?? [], [items]);
-  const columns = useMemo(() => groupByStatus(list), [list]);
 
   const mediaPaths = useMemo(
-    () => Object.values(mediaMap ?? {}).flat().map((m) => m.path),
+    () => Object.values(mediaMap).flat().map((m) => m.path),
     [mediaMap],
   );
   const mediaUrls = useSignedUrls(supabase, mediaPaths);
 
-  // --- mutations (optimistic local state + persistence) ---
+  const fail = useCallback((e: unknown, fallback: string) => {
+    setError((e as Error)?.message ?? fallback);
+  }, []);
+
+  // --- products ---
 
   const handleAddItem = useCallback(async () => {
     try {
-      // 'idea' rather than the column default 'draft', which is a social stage
-      // and would leave the new row out of every merchandise column.
-      const created = await createScene(supabase, userId, project.id, list.length, 'idea');
+      // 'concept' rather than the column default 'draft', which is a social
+      // stage and would leave the new row showing the wrong badge.
+      const created = await createScene(supabase, userId, project.id, list.length, 'concept');
       setItems((prev) => [...(prev ?? []), created]);
-      setMediaMap((prev) => ({ ...(prev ?? {}), [created.id]: [] }));
-      setDetailId(created.id);
+      setMediaMap((prev) => ({ ...prev, [created.id]: [] }));
+      setQuoteMap((prev) => ({ ...prev, [created.id]: [] }));
+      setOrderMap((prev) => ({ ...prev, [created.id]: [] }));
+      setExpandedId(created.id);
     } catch (e) {
-      setError((e as Error)?.message ?? 'Failed to add item.');
+      fail(e, 'Failed to add product.');
     }
-  }, [supabase, userId, project.id, list.length]);
+  }, [supabase, userId, project.id, list.length, fail]);
 
   const handleSaveFields = useCallback(
     (id: string, fields: Partial<MerchFields>) => {
       setItems((prev) => prev?.map((p) => (p.id === id ? { ...p, ...fields } : p)) ?? prev);
-      void updateMerchFields(supabase, id, fields).catch((e) =>
-        setError((e as Error)?.message ?? 'Failed to save changes.'),
-      );
+      void updateMerchFields(supabase, id, fields).catch((e) => fail(e, 'Failed to save changes.'));
     },
-    [supabase],
+    [supabase, fail],
   );
 
-  /**
-   * Drag a card to a stage. order_index is global across the project, so the
-   * whole board is renumbered in reading order (column by column) and saved in
-   * one upsert — that keeps the stored order authoritative and matches what
-   * the board actually shows.
-   */
-  const handleMoveItem = useCallback(
-    (itemId: string, toStatus: MerchStatus, toIndex: number) => {
-      const current = items ?? [];
-      const moving = current.find((i) => i.id === itemId);
-      if (!moving) return;
-
-      const flat = moveItem(current, itemId, toStatus, toIndex);
-      if (flat === current) return;
-
-      setItems(flat);
-
-      if (moving.status !== toStatus) {
-        void updateMerchFields(supabase, itemId, { status: toStatus }).catch((e) =>
-          setError((e as Error)?.message ?? 'Failed to move item.'),
-        );
+  const handleDelete = useCallback(
+    async (item: Scene) => {
+      if (
+        !window.confirm(
+          `Delete "${item.name || 'this product'}"? Its images, quotes, and orders go with it.`,
+        )
+      )
+        return;
+      if (expandedId === item.id) setExpandedId(null);
+      setItems((prev) => prev?.filter((p) => p.id !== item.id) ?? prev);
+      try {
+        // The folder sweep clears its images; quotes, orders and scene_media
+        // rows cascade with the scenes row.
+        await deleteSceneRow(supabase, item);
+      } catch (e) {
+        fail(e, 'Failed to delete product.');
       }
-      void persistOrder(supabase, flat).catch((e) =>
-        setError((e as Error)?.message ?? 'Failed to save order.'),
-      );
     },
-    [supabase, items],
+    [supabase, expandedId, fail],
   );
+
+  // --- media ---
 
   const handleAddMedia = useCallback(
     async (item: Scene, files: File[]) => {
       setUploading(true);
       try {
-        let position = mediaMap?.[item.id]?.length ?? 0;
+        let position = mediaMap[item.id]?.length ?? 0;
         for (const file of files) {
           // Sequential so positions land in pick order; each success merges
           // immediately, so a later failure keeps what already uploaded.
           const created = await addSceneMedia(supabase, userId, item.id, file, position);
           position++;
           setMediaMap((prev) => ({
-            ...(prev ?? {}),
-            [item.id]: [...(prev?.[item.id] ?? []), created],
+            ...prev,
+            [item.id]: [...(prev[item.id] ?? []), created],
           }));
         }
       } catch (e) {
-        setError((e as Error)?.message ?? 'Media upload failed.');
+        fail(e, 'Media upload failed.');
       } finally {
         setUploading(false);
       }
     },
-    [supabase, userId, mediaMap],
+    [supabase, userId, mediaMap, fail],
   );
 
   const handleRemoveMedia = useCallback(
     async (item: Scene, media: SceneMedia) => {
       setMediaMap((prev) => ({
-        ...(prev ?? {}),
-        [item.id]: (prev?.[item.id] ?? []).filter((m) => m.id !== media.id),
+        ...prev,
+        [item.id]: (prev[item.id] ?? []).filter((m) => m.id !== media.id),
       }));
       try {
         await removeSceneMediaItem(supabase, media);
       } catch (e) {
-        setError((e as Error)?.message ?? 'Failed to remove media.');
+        fail(e, 'Failed to remove media.');
       }
     },
-    [supabase],
+    [supabase, fail],
   );
 
   const handleReorderMedia = useCallback(
     (item: Scene, ordered: SceneMedia[]) => {
       setMediaMap((prev) => ({
-        ...(prev ?? {}),
+        ...prev,
         [item.id]: ordered.map((m, i) => ({ ...m, position: i })),
       }));
       void persistMediaOrder(supabase, ordered).catch((e) =>
-        setError((e as Error)?.message ?? 'Failed to save media order.'),
+        fail(e, 'Failed to save media order.'),
       );
     },
-    [supabase],
+    [supabase, fail],
   );
 
-  // Board reading order (column by column) drives prev/next in the detail panel.
-  const visualOrder = useMemo(() => columns.flatMap((c) => c.items), [columns]);
+  // --- quotes ---
 
-  const handleDelete = useCallback(
+  const handleAddQuote = useCallback(
     async (item: Scene) => {
-      const idx = visualOrder.findIndex((p) => p.id === item.id);
-      const remaining = visualOrder.filter((p) => p.id !== item.id);
-
-      // Move/close the detail panel before the row disappears.
-      if (remaining.length === 0) setDetailId(null);
-      else if (detailId === item.id) {
-        setDetailId(remaining[Math.min(idx, remaining.length - 1)]?.id ?? null);
-      }
-
-      setItems((prev) => prev?.filter((p) => p.id !== item.id) ?? prev);
-      setMediaMap((prev) => {
-        if (!prev) return prev;
-        const { [item.id]: _gone, ...rest } = prev;
-        return rest;
-      });
       try {
-        // deleteScene's folder sweep also removes this item's media objects;
-        // scene_media rows cascade with the scenes row.
-        await deleteSceneRow(supabase, item);
+        const created = await addQuote(
+          supabase,
+          userId,
+          item.id,
+          quoteMap[item.id]?.length ?? 0,
+        );
+        setQuoteMap((prev) => ({ ...prev, [item.id]: [...(prev[item.id] ?? []), created] }));
       } catch (e) {
-        setError((e as Error)?.message ?? 'Failed to delete item.');
+        fail(e, 'Failed to add supplier.');
       }
     },
-    [supabase, visualOrder, detailId],
+    [supabase, userId, quoteMap, fail],
+  );
+
+  const handleSaveQuote = useCallback(
+    (id: string, fields: Partial<MerchQuoteFields>) => {
+      setQuoteMap((prev) => {
+        const next: Record<string, MerchQuote[]> = {};
+        for (const [sceneId, rows] of Object.entries(prev)) {
+          next[sceneId] = rows.map((q) => (q.id === id ? { ...q, ...fields } : q));
+        }
+        return next;
+      });
+      void updateQuote(supabase, id, fields).catch((e) => fail(e, 'Failed to save supplier.'));
+    },
+    [supabase, fail],
+  );
+
+  const handleRemoveQuote = useCallback(
+    async (quote: MerchQuote) => {
+      setQuoteMap((prev) => ({
+        ...prev,
+        [quote.scene_id]: (prev[quote.scene_id] ?? []).filter((q) => q.id !== quote.id),
+      }));
+      try {
+        await removeQuote(supabase, quote.id);
+      } catch (e) {
+        fail(e, 'Failed to remove supplier.');
+      }
+    },
+    [supabase, fail],
+  );
+
+  // --- orders ---
+
+  const handleAddOrder = useCallback(
+    async (item: Scene) => {
+      try {
+        const created = await addOrder(
+          supabase,
+          userId,
+          item.id,
+          orderMap[item.id]?.length ?? 0,
+        );
+        setOrderMap((prev) => ({ ...prev, [item.id]: [...(prev[item.id] ?? []), created] }));
+      } catch (e) {
+        fail(e, 'Failed to add order.');
+      }
+    },
+    [supabase, userId, orderMap, fail],
+  );
+
+  const handleSaveOrder = useCallback(
+    (id: string, fields: Partial<MerchOrderFields>) => {
+      setOrderMap((prev) => {
+        const next: Record<string, MerchOrder[]> = {};
+        for (const [sceneId, rows] of Object.entries(prev)) {
+          next[sceneId] = rows.map((o) => (o.id === id ? { ...o, ...fields } : o));
+        }
+        return next;
+      });
+      void updateOrder(supabase, id, fields).catch((e) => fail(e, 'Failed to save order.'));
+    },
+    [supabase, fail],
+  );
+
+  const handleRemoveOrder = useCallback(
+    async (order: MerchOrder) => {
+      setOrderMap((prev) => ({
+        ...prev,
+        [order.scene_id]: (prev[order.scene_id] ?? []).filter((o) => o.id !== order.id),
+      }));
+      try {
+        await removeOrder(supabase, order.id);
+      } catch (e) {
+        fail(e, 'Failed to remove order.');
+      }
+    },
+    [supabase, fail],
   );
 
   const handleSignOut = useCallback(async () => {
@@ -280,19 +366,6 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
       .catch(() => setError(`Couldn’t copy — share link: ${url}`));
   }, [project.share_token]);
 
-  const currentItem = detailId ? list.find((p) => p.id === detailId) ?? null : null;
-
-  const step = useCallback(
-    (dir: 1 | -1) => {
-      if (!detailId || visualOrder.length === 0) return;
-      const idx = visualOrder.findIndex((p) => p.id === detailId);
-      if (idx < 0) return;
-      const next = (idx + dir + visualOrder.length) % visualOrder.length;
-      setDetailId(visualOrder[next].id);
-    },
-    [detailId, visualOrder],
-  );
-
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-canvas font-sans text-ink">
       <PipelineToolbar
@@ -311,8 +384,8 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
         shareCopied={shareCopied}
         onCopyShareLink={copyShareLink}
         onSignOut={handleSignOut}
-        noun={{ one: 'item', many: 'items' }}
-        addLabel="Add item"
+        noun={{ one: 'product', many: 'products' }}
+        addLabel="Add product"
         showCardSize={false}
       />
 
@@ -332,18 +405,52 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
       <div className="flex min-h-0 flex-1">
         {items === null ? (
           <div className="flex flex-1 items-center justify-center text-[13px] text-muted">
-            Loading items…
+            Loading products…
+          </div>
+        ) : list.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+            <div className="text-[15px] font-semibold text-bright">No products yet</div>
+            <p className="max-w-xs text-[13px] leading-relaxed text-muted">
+              Add a product and drop in a picture — suppliers, quotes, and orders go inside it.
+            </p>
+            <button
+              type="button"
+              onClick={handleAddItem}
+              className="flex h-[34px] items-center gap-[7px] rounded-lg border border-accent bg-accent px-3.5 text-[13px] font-medium text-canvas transition-opacity hover:opacity-90"
+            >
+              <Plus size={14} />
+              Add your first product
+            </button>
           </div>
         ) : (
-          <MerchBoard
-            columns={columns}
-            itemCount={list.length}
-            mediaMap={mediaMap}
-            mediaUrls={mediaUrls}
-            onOpenItem={setDetailId}
-            onAddItem={handleAddItem}
-            onMoveItem={handleMoveItem}
-          />
+          <div className="min-w-0 flex-1 overflow-y-auto px-[26px] pb-20 pt-7">
+            <div className="mx-auto flex max-w-[1100px] flex-col gap-2.5">
+              {list.map((item) => (
+                <MerchRow
+                  key={item.id}
+                  item={item}
+                  media={mediaMap[item.id] ?? []}
+                  mediaUrls={mediaUrls}
+                  quotes={quoteMap[item.id] ?? []}
+                  orders={orderMap[item.id] ?? []}
+                  expanded={expandedId === item.id}
+                  uploading={uploading}
+                  onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                  onSaveFields={handleSaveFields}
+                  onDelete={handleDelete}
+                  onAddMedia={handleAddMedia}
+                  onRemoveMedia={handleRemoveMedia}
+                  onReorderMedia={handleReorderMedia}
+                  onAddQuote={handleAddQuote}
+                  onSaveQuote={handleSaveQuote}
+                  onRemoveQuote={handleRemoveQuote}
+                  onAddOrder={handleAddOrder}
+                  onSaveOrder={handleSaveOrder}
+                  onRemoveOrder={handleRemoveOrder}
+                />
+              ))}
+            </div>
+          </div>
         )}
         {notesOpen && (
           <ScriptPanel
@@ -358,23 +465,6 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
           />
         )}
       </div>
-
-      {currentItem && (
-        <MerchDetail
-          item={currentItem}
-          media={mediaMap?.[currentItem.id] ?? []}
-          mediaUrls={mediaUrls}
-          uploading={uploading}
-          onClose={() => setDetailId(null)}
-          onPrev={() => step(-1)}
-          onNext={() => step(1)}
-          onSaveFields={handleSaveFields}
-          onAddMedia={handleAddMedia}
-          onRemoveMedia={handleRemoveMedia}
-          onReorderMedia={handleReorderMedia}
-          onDelete={handleDelete}
-        />
-      )}
     </div>
   );
 }

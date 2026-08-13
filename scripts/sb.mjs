@@ -407,7 +407,8 @@ const STATUSES = ['idea', 'draft', 'ready', 'scheduled', 'posted'];
 
 // Merchandise stages. `status` is one shared column, so the DB CHECK is the
 // union of both lists; the CLI validates against the project's own kind.
-const MERCH_STATUSES = ['idea', 'sourcing', 'quoted', 'sample', 'ready'];
+const MERCH_STATUSES = ['concept', 'sourcing', 'quotes', 'orders', 'ready'];
+const ORDER_STATUSES = ['placed', 'in_production', 'shipped', 'received', 'cancelled'];
 
 const KNOWN_PLATFORMS = [
   'linkedin',
@@ -435,6 +436,39 @@ function parseStatusFlag(value, kind = 'social') {
     throw new Error(`Invalid --status "${value}". One of: ${allowed.join(', ')}`);
   }
   return v;
+}
+
+function parseOrderStatusFlag(value) {
+  const v = String(value).toLowerCase().trim().replace(/[\s-]+/g, '_');
+  if (!ORDER_STATUSES.includes(v)) {
+    throw new Error(`Invalid --status "${value}". One of: ${ORDER_STATUSES.join(', ')}`);
+  }
+  return v;
+}
+
+/** Parse a whole-number flag. "none"/"" clears back to unknown (null). */
+function parseCountFlag(value, flag) {
+  const raw = String(value).trim();
+  if (raw === '' || raw.toLowerCase() === 'none') return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`Invalid ${flag} "${value}" — pass a whole number, or "none" to clear.`);
+  }
+  return n;
+}
+
+/** Parse a YYYY-MM-DD date flag. "none"/"" clears it. */
+function parseDateFlag(value, flag) {
+  const raw = String(value).trim();
+  if (raw === '' || raw.toLowerCase() === 'none') return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new Error(`Invalid ${flag} "${value}" — use YYYY-MM-DD, or "none" to clear.`);
+  }
+  const d = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || !d.toISOString().startsWith(raw)) {
+    throw new Error(`Invalid ${flag} "${value}" — that date doesn't exist.`);
+  }
+  return raw;
 }
 
 /**
@@ -499,6 +533,42 @@ function parseScheduleFlag(value) {
 // so all the original commands keep working there.
 function projectKind(project) {
   return project.kind ?? 'storyboard';
+}
+
+const money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toFixed(2)}`);
+
+/** Fetch merch_quotes / merch_orders for many products, keyed by scene_id. */
+async function fetchLines(table, sceneIds) {
+  if (sceneIds.length === 0) return {};
+  const { data, error } = await db()
+    .from(table)
+    .select('*')
+    .in('scene_id', sceneIds)
+    .order('position', { ascending: true });
+  if (error) throw error;
+  const map = {};
+  for (const id of sceneIds) map[id] = [];
+  for (const row of data ?? []) (map[row.scene_id] ??= []).push(row);
+  return map;
+}
+
+/** Cheapest priced quote. Rows without a cost are sourcing leads, not quotes. */
+function bestUnitCost(quotes) {
+  const priced = quotes.filter((q) => q.unit_cost !== null && q.unit_cost !== undefined);
+  if (priced.length === 0) return null;
+  return priced.reduce((lo, q) => (Number(q.unit_cost) < Number(lo) ? Number(q.unit_cost) : lo),
+    Number(priced[0].unit_cost));
+}
+
+/** Resolve a 1-based index / id prefix within a product's quote or order rows. */
+function resolveLine(rows, ref, what) {
+  if (!ref) throw new Error(`Which ${what}? Pass its number from \`list\`, or an id prefix.`);
+  const n = Number(ref);
+  if (Number.isInteger(n) && n >= 1 && n <= rows.length) return rows[n - 1];
+  const matches = rows.filter((r) => r.id === ref || r.id.startsWith(String(ref)));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) throw new Error(`"${ref}" matches more than one ${what}.`);
+  throw new Error(`No ${what} "${ref}" on that product.`);
 }
 
 /** What a scenes row is called in a given project kind. */
@@ -682,23 +752,44 @@ async function cmdList(flags) {
       mediaCount[m.scene_id] = (mediaCount[m.scene_id] ?? 0) + 1;
     });
 
-    const money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toFixed(2)}`);
+    const quotes = await fetchLines('merch_quotes', scenes.map((s) => s.id));
+    const orders = await fetchLines('merch_orders', scenes.map((s) => s.id));
 
-    console.log(`${scenes.length} item(s):\n`);
+    console.log(`${scenes.length} product(s):\n`);
     scenes.forEach((s, i) => {
       const num = String(i + 1).padStart(2, ' ');
       const name = truncate(s.name || '(untitled)', 28).padEnd(28, ' ');
+      const q = quotes[s.id] ?? [];
+      const o = orders[s.id] ?? [];
       console.log(`${num}. ${name}  ${s.id.slice(0, 8)}`);
       const parts = [
-        `stage: ${s.status ?? 'idea'}`,
-        `cost: ${money(s.cost)}`,
+        `stage: ${s.status ?? 'concept'}`,
+        `best: ${money(bestUnitCost(q))}`,
         `price: ${money(s.sale_price)}`,
+        `quotes: ${q.length}`,
+        `orders: ${o.length}`,
         `images: ${mediaCount[s.id] ?? 0}`,
       ];
       if (s.dev_time) parts.push(`dev: ${s.dev_time}`);
       console.log(`      ${parts.join(' · ')}`);
-      if (s.supplier_url) console.log(`      supplier: ${truncate(s.supplier_url, 80)}`);
       if (s.description) console.log(`      desc: ${truncate(s.description, 90)}`);
+      q.forEach((row, qi) => {
+        const bits = [money(row.unit_cost)];
+        if (row.moq !== null && row.moq !== undefined) bits.push(`MOQ ${row.moq}`);
+        if (row.lead_time) bits.push(row.lead_time);
+        console.log(
+          `      q${qi + 1}. ${truncate(row.supplier || '(unnamed supplier)', 26).padEnd(26, ' ')} ${bits.join(' · ')}`,
+        );
+      });
+      o.forEach((row, oi) => {
+        const total =
+          row.quantity !== null && row.unit_cost !== null
+            ? money(Number(row.quantity) * Number(row.unit_cost))
+            : '—';
+        console.log(
+          `      o${oi + 1}. ${truncate(row.supplier || '(unnamed)', 20).padEnd(20, ' ')} ${row.quantity ?? '—'} x ${money(row.unit_cost)} = ${total}  [${row.status}]`,
+        );
+      });
     });
     return;
   }
@@ -759,10 +850,7 @@ async function cmdAdd(flags) {
 
   const kind = projectKind(project);
   const merchFlagUsed =
-    typeof flags.supplier === 'string' ||
-    typeof flags.cost === 'string' ||
-    typeof flags.price === 'string' ||
-    typeof flags['dev-time'] === 'string';
+    typeof flags.price === 'string' || typeof flags['dev-time'] === 'string';
   const socialFlagUsed =
     typeof flags.copy === 'string' ||
     typeof flags.schedule === 'string' ||
@@ -770,7 +858,7 @@ async function cmdAdd(flags) {
   // --media and --status are shared by social and merchandise.
   const mediaFlagUsed = Array.isArray(flags.media);
 
-  if (merchFlagUsed) assertMerch(project, 'that flag set (--supplier/--cost/--price/--dev-time)');
+  if (merchFlagUsed) assertMerch(project, 'that flag set (--price/--dev-time)');
   if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms)');
   if (mediaFlagUsed) assertHasMedia(project, '--media');
   if (typeof flags.image === 'string') assertStoryboard(project, '--image');
@@ -794,8 +882,6 @@ async function cmdAdd(flags) {
   if (typeof flags.schedule === 'string') row.scheduled_at = parseScheduleFlag(flags.schedule);
   if (typeof flags.platforms === 'string') row.platforms = parsePlatformsFlag(flags.platforms);
   // Merchandise sourcing fields.
-  if (typeof flags.supplier === 'string') row.supplier_url = flags.supplier.trim();
-  if (typeof flags.cost === 'string') row.cost = parseMoneyFlag(flags.cost, '--cost');
   if (typeof flags.price === 'string') row.sale_price = parseMoneyFlag(flags.price, '--price');
   if (typeof flags['dev-time'] === 'string') row.dev_time = flags['dev-time'];
   // New merchandise rows start at the board's first stage, not the column
@@ -855,16 +941,13 @@ async function cmdSet(positional, flags) {
 
   const kind = projectKind(project);
   const merchFlagUsed =
-    typeof flags.supplier === 'string' ||
-    typeof flags.cost === 'string' ||
-    typeof flags.price === 'string' ||
-    typeof flags['dev-time'] === 'string';
+    typeof flags.price === 'string' || typeof flags['dev-time'] === 'string';
   const socialFlagUsed =
     typeof flags.copy === 'string' ||
     typeof flags.schedule === 'string' ||
     typeof flags.platforms === 'string';
 
-  if (merchFlagUsed) assertMerch(project, 'that flag set (--supplier/--cost/--price/--dev-time)');
+  if (merchFlagUsed) assertMerch(project, 'that flag set (--price/--dev-time)');
   if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms)');
   if (typeof flags.status === 'string' && kind === 'storyboard') {
     assertSocial(project, '--status');
@@ -879,14 +962,12 @@ async function cmdSet(positional, flags) {
   if (typeof flags.status === 'string') patch.status = parseStatusFlag(flags.status, kind);
   if (typeof flags.schedule === 'string') patch.scheduled_at = parseScheduleFlag(flags.schedule);
   if (typeof flags.platforms === 'string') patch.platforms = parsePlatformsFlag(flags.platforms);
-  if (typeof flags.supplier === 'string') patch.supplier_url = flags.supplier.trim();
-  if (typeof flags.cost === 'string') patch.cost = parseMoneyFlag(flags.cost, '--cost');
   if (typeof flags.price === 'string') patch.sale_price = parseMoneyFlag(flags.price, '--price');
   if (typeof flags['dev-time'] === 'string') patch.dev_time = flags['dev-time'];
   if (Object.keys(patch).length === 0) {
     throw new Error(
       kind === 'merchandise'
-        ? 'Nothing to update. Pass --name, --desc, --status, --supplier, --cost, --price, and/or --dev-time.'
+        ? 'Nothing to update. Pass --name, --desc, --status, --price, and/or --dev-time.'
         : isSocial
           ? 'Nothing to update. Pass --name, --desc, --prompt, --copy, --status, --schedule, and/or --platforms.'
           : 'Nothing to update. Pass --name, --desc, and/or --prompt.',
@@ -900,6 +981,181 @@ async function cmdSet(positional, flags) {
       .filter((k) => k !== 'updated_at')
       .join(', ')})`,
   );
+}
+
+/**
+ * `quote <product> [list|add|set <n>|rm <n>]` — the suppliers under a product.
+ * A row with no --cost is a sourcing lead; adding a cost makes it a quote.
+ */
+async function cmdQuote(positional, flags) {
+  const uid = await ownerId();
+  const project = await resolveActiveProject(flags);
+  announce(project);
+  assertMerch(project, 'the quote command');
+  const scene = await resolveScene(project.id, positional[0]);
+  const sub = positional[1] ?? 'list';
+  const rows = (await fetchLines('merch_quotes', [scene.id]))[scene.id] ?? [];
+
+  if (sub === 'list') {
+    if (rows.length === 0) {
+      console.log(`No suppliers on "${scene.name || scene.id.slice(0, 8)}".`);
+      return;
+    }
+    console.log(`${rows.length} supplier(s) on "${scene.name || scene.id.slice(0, 8)}":\n`);
+    rows.forEach((r, i) => {
+      console.log(` ${i + 1}. ${r.supplier || '(unnamed supplier)'}  ${r.id.slice(0, 8)}`);
+      const bits = [`cost: ${money(r.unit_cost)}`];
+      if (r.moq !== null) bits.push(`MOQ: ${r.moq}`);
+      if (r.lead_time) bits.push(`lead: ${r.lead_time}`);
+      console.log(`      ${bits.join(' · ')}`);
+      if (r.contact) console.log(`      contact: ${r.contact}`);
+      if (r.url) console.log(`      url: ${truncate(r.url, 80)}`);
+      if (r.notes) console.log(`      notes: ${truncate(r.notes, 90)}`);
+    });
+    return;
+  }
+
+  if (sub === 'add') {
+    const row = {
+      user_id: uid,
+      scene_id: scene.id,
+      position: rows.length,
+      supplier: typeof flags.supplier === 'string' ? flags.supplier : '',
+      contact: typeof flags.contact === 'string' ? flags.contact : '',
+      url: typeof flags.url === 'string' ? flags.url.trim() : '',
+      lead_time: typeof flags['lead-time'] === 'string' ? flags['lead-time'] : '',
+      notes: typeof flags.notes === 'string' ? flags.notes : '',
+    };
+    if (typeof flags.cost === 'string') row.unit_cost = parseMoneyFlag(flags.cost, '--cost');
+    if (typeof flags.moq === 'string') row.moq = parseCountFlag(flags.moq, '--moq');
+    const { data, error } = await db().from('merch_quotes').insert(row).select().single();
+    if (error) throw error;
+    console.log(`Added supplier ${data.id.slice(0, 8)} to "${scene.name || 'product'}"`);
+    return;
+  }
+
+  if (sub === 'set') {
+    const target = resolveLine(rows, positional[2], 'supplier');
+    const patch = {};
+    if (typeof flags.supplier === 'string') patch.supplier = flags.supplier;
+    if (typeof flags.contact === 'string') patch.contact = flags.contact;
+    if (typeof flags.url === 'string') patch.url = flags.url.trim();
+    if (typeof flags['lead-time'] === 'string') patch.lead_time = flags['lead-time'];
+    if (typeof flags.notes === 'string') patch.notes = flags.notes;
+    if (typeof flags.cost === 'string') patch.unit_cost = parseMoneyFlag(flags.cost, '--cost');
+    if (typeof flags.moq === 'string') patch.moq = parseCountFlag(flags.moq, '--moq');
+    if (Object.keys(patch).length === 0) {
+      throw new Error(
+        'Nothing to update. Pass --supplier, --contact, --url, --cost, --moq, --lead-time, and/or --notes.',
+      );
+    }
+    patch.updated_at = new Date().toISOString();
+    const { error } = await db().from('merch_quotes').update(patch).eq('id', target.id);
+    if (error) throw error;
+    console.log(
+      `Updated supplier ${target.id.slice(0, 8)} (${Object.keys(patch)
+        .filter((k) => k !== 'updated_at')
+        .join(', ')})`,
+    );
+    return;
+  }
+
+  if (sub === 'rm' || sub === 'remove' || sub === 'delete') {
+    const target = resolveLine(rows, positional[2], 'supplier');
+    const { error } = await db().from('merch_quotes').delete().eq('id', target.id);
+    if (error) throw error;
+    console.log(`Removed supplier ${target.id.slice(0, 8)}`);
+    return;
+  }
+
+  throw new Error('Usage: sb quote <product> <list|add|set <n>|rm <n>> [flags]');
+}
+
+/** `order <product> [list|add|set <n>|rm <n>]` — orders placed on a product. */
+async function cmdOrder(positional, flags) {
+  const uid = await ownerId();
+  const project = await resolveActiveProject(flags);
+  announce(project);
+  assertMerch(project, 'the order command');
+  const scene = await resolveScene(project.id, positional[0]);
+  const sub = positional[1] ?? 'list';
+  const rows = (await fetchLines('merch_orders', [scene.id]))[scene.id] ?? [];
+
+  if (sub === 'list') {
+    if (rows.length === 0) {
+      console.log(`No orders on "${scene.name || scene.id.slice(0, 8)}".`);
+      return;
+    }
+    console.log(`${rows.length} order(s) on "${scene.name || scene.id.slice(0, 8)}":\n`);
+    rows.forEach((r, i) => {
+      const total =
+        r.quantity !== null && r.unit_cost !== null
+          ? money(Number(r.quantity) * Number(r.unit_cost))
+          : '—';
+      console.log(` ${i + 1}. ${r.supplier || '(unnamed)'}  ${r.id.slice(0, 8)}  [${r.status}]`);
+      console.log(`      ${r.quantity ?? '—'} x ${money(r.unit_cost)} = ${total}`);
+      if (r.ordered_at || r.expected_at) {
+        console.log(`      ordered: ${r.ordered_at ?? '—'} · due: ${r.expected_at ?? '—'}`);
+      }
+      if (r.notes) console.log(`      notes: ${truncate(r.notes, 90)}`);
+    });
+    return;
+  }
+
+  if (sub === 'add') {
+    const row = {
+      user_id: uid,
+      scene_id: scene.id,
+      position: rows.length,
+      supplier: typeof flags.supplier === 'string' ? flags.supplier : '',
+      notes: typeof flags.notes === 'string' ? flags.notes : '',
+    };
+    if (typeof flags.qty === 'string') row.quantity = parseCountFlag(flags.qty, '--qty');
+    if (typeof flags.cost === 'string') row.unit_cost = parseMoneyFlag(flags.cost, '--cost');
+    if (typeof flags.ordered === 'string') row.ordered_at = parseDateFlag(flags.ordered, '--ordered');
+    if (typeof flags.due === 'string') row.expected_at = parseDateFlag(flags.due, '--due');
+    if (typeof flags.status === 'string') row.status = parseOrderStatusFlag(flags.status);
+    const { data, error } = await db().from('merch_orders').insert(row).select().single();
+    if (error) throw error;
+    console.log(`Added order ${data.id.slice(0, 8)} to "${scene.name || 'product'}"`);
+    return;
+  }
+
+  if (sub === 'set') {
+    const target = resolveLine(rows, positional[2], 'order');
+    const patch = {};
+    if (typeof flags.supplier === 'string') patch.supplier = flags.supplier;
+    if (typeof flags.notes === 'string') patch.notes = flags.notes;
+    if (typeof flags.qty === 'string') patch.quantity = parseCountFlag(flags.qty, '--qty');
+    if (typeof flags.cost === 'string') patch.unit_cost = parseMoneyFlag(flags.cost, '--cost');
+    if (typeof flags.ordered === 'string') patch.ordered_at = parseDateFlag(flags.ordered, '--ordered');
+    if (typeof flags.due === 'string') patch.expected_at = parseDateFlag(flags.due, '--due');
+    if (typeof flags.status === 'string') patch.status = parseOrderStatusFlag(flags.status);
+    if (Object.keys(patch).length === 0) {
+      throw new Error(
+        'Nothing to update. Pass --supplier, --qty, --cost, --ordered, --due, --status, and/or --notes.',
+      );
+    }
+    patch.updated_at = new Date().toISOString();
+    const { error } = await db().from('merch_orders').update(patch).eq('id', target.id);
+    if (error) throw error;
+    console.log(
+      `Updated order ${target.id.slice(0, 8)} (${Object.keys(patch)
+        .filter((k) => k !== 'updated_at')
+        .join(', ')})`,
+    );
+    return;
+  }
+
+  if (sub === 'rm' || sub === 'remove' || sub === 'delete') {
+    const target = resolveLine(rows, positional[2], 'order');
+    const { error } = await db().from('merch_orders').delete().eq('id', target.id);
+    if (error) throw error;
+    console.log(`Removed order ${target.id.slice(0, 8)}`);
+    return;
+  }
+
+  throw new Error('Usage: sb order <product> <list|add|set <n>|rm <n>> [flags]');
 }
 
 async function cmdMedia(positional, flags) {
@@ -1123,10 +1379,18 @@ function printHelp() {
       '  add [--name N] [--desc D] [--prompt P] [--image PATH|URL]',
       '      [--copy TEXT] [--media PATH|URL]… [--schedule "YYYY-MM-DD[ HH:MM]"]',
       '      [--platforms a,b,c] [--status S]',
-      '      [--supplier URL] [--cost N] [--price N] [--dev-time TEXT]  (merch)',
+      '      [--price N] [--dev-time TEXT]                          (merch)',
       '  set <scene> [--name N] [--desc D] [--prompt P] [--copy TEXT]',
       '      [--schedule …|none] [--platforms …|none] [--status S]',
-      '      [--supplier URL] [--cost N|none] [--price N|none] [--dev-time TEXT]',
+      '      [--price N|none] [--dev-time TEXT]                     (merch)',
+      '  quote <product> [list]                 List a product’s suppliers',
+      '  quote <product> add|set <n> [--supplier N] [--contact C] [--url U]',
+      '      [--cost N|none] [--moq N|none] [--lead-time T] [--notes T]',
+      '  quote <product> rm <n>                 Remove a supplier/quote',
+      '  order <product> [list]                 List a product’s orders',
+      '  order <product> add|set <n> [--supplier N] [--qty N] [--cost N]',
+      '      [--ordered YYYY-MM-DD] [--due YYYY-MM-DD] [--status S] [--notes T]',
+      '  order <product> rm <n>                 Remove an order',
       '  image <scene> <PATH|URL>               Upload/replace a storyboard scene image',
       '  media <post> [list]                    List a post’s media',
       '  media <post> add <PATH|URL>…           Append images/videos to a post',
@@ -1143,7 +1407,9 @@ function printHelp() {
       '--image/--media accept a local file path or an http(s) URL. --media repeats.',
       `--status (social) is one of: ${STATUSES.join(', ')}.`,
       `--status (merchandise) is one of: ${MERCH_STATUSES.join(', ')}.`,
-      '--cost/--price take a number; "none" clears back to unknown.',
+      `order --status is one of: ${ORDER_STATUSES.join(', ')}.`,
+      '--cost/--price/--moq/--qty take a number; "none" clears back to unknown.',
+      'A supplier with no --cost is a sourcing lead; adding a cost makes it a quote.',
       '--schedule is local time; "none" clears it (same for --platforms).',
       'Platform aliases normalize (twitter→x, ig→instagram, …); unknowns warn.',
       'Videos: prefer .mp4 (H.264) ≤50MB (Supabase per-file cap; raiseable).',
@@ -1181,6 +1447,12 @@ async function main() {
       return cmdImage(positional, flags);
     case 'media':
       return cmdMedia(positional, flags);
+    case 'quote':
+    case 'quotes':
+      return cmdQuote(positional, flags);
+    case 'order':
+    case 'orders':
+      return cmdOrder(positional, flags);
     case 'share':
       return cmdShare(flags);
     case 'rm':

@@ -28,13 +28,15 @@ export interface SharedScene {
   scheduled_at: string | null;
   platforms: string[];
   image_path: string | null;
-  /** Merchandise: sourcing detail. Anyone with the link can read these. */
-  supplier_url: string;
-  cost: number | null;
+  /** Merchandise: anyone with the link can read these. */
   sale_price: number | null;
   dev_time: string;
   created_at: string;
   media: SharedMedia[];
+  /** Merchandise: cheapest quoted unit cost, or null if nothing is quoted. */
+  best_cost: number | null;
+  quote_count: number;
+  order_count: number;
 }
 
 export interface SharedProjectData {
@@ -67,13 +69,16 @@ export async function fetchSharedProject(token: string): Promise<SharedProjectDa
   const { data: scenes, error: scenesError } = await admin
     .from('scenes')
     .select(
-      'id, order_index, name, description, copy, status, scheduled_at, platforms, image_path, supplier_url, cost, sale_price, dev_time, created_at',
+      'id, order_index, name, description, copy, status, scheduled_at, platforms, image_path, sale_price, dev_time, created_at',
     )
     .eq('project_id', project.id)
     .order('order_index', { ascending: true });
   if (scenesError) throw scenesError;
 
-  const sceneRows = (scenes ?? []) as Omit<SharedScene, 'media'>[];
+  const sceneRows = (scenes ?? []) as Omit<
+    SharedScene,
+    'media' | 'best_cost' | 'quote_count' | 'order_count'
+  >[];
   const sceneIds = sceneRows.map((s) => s.id);
 
   let mediaRows: SharedMedia[] = [];
@@ -92,6 +97,37 @@ export async function fetchSharedProject(token: string): Promise<SharedProjectDa
     (mediaByScene[m.scene_id] ??= []).push(m);
   });
 
+  // Merchandise: summarise quotes/orders rather than exposing supplier names
+  // and contacts on a public link — the shared board shows the numbers, not
+  // who to call.
+  const bestCost: Record<string, number | null> = {};
+  const quoteCount: Record<string, number> = {};
+  const orderCount: Record<string, number> = {};
+  if (project.kind === 'merchandise' && sceneIds.length > 0) {
+    const { data: quotes, error: quotesError } = await admin
+      .from('merch_quotes')
+      .select('scene_id, unit_cost')
+      .in('scene_id', sceneIds);
+    if (quotesError) throw quotesError;
+    for (const q of (quotes ?? []) as { scene_id: string; unit_cost: number | null }[]) {
+      quoteCount[q.scene_id] = (quoteCount[q.scene_id] ?? 0) + 1;
+      if (q.unit_cost === null) continue;
+      const seen = bestCost[q.scene_id];
+      if (seen === undefined || seen === null || q.unit_cost < seen) {
+        bestCost[q.scene_id] = q.unit_cost;
+      }
+    }
+
+    const { data: orders, error: ordersError } = await admin
+      .from('merch_orders')
+      .select('scene_id')
+      .in('scene_id', sceneIds);
+    if (ordersError) throw ordersError;
+    for (const o of (orders ?? []) as { scene_id: string }[]) {
+      orderCount[o.scene_id] = (orderCount[o.scene_id] ?? 0) + 1;
+    }
+  }
+
   const allPaths = [
     ...sceneRows.map((s) => s.image_path).filter((p): p is string => Boolean(p)),
     ...mediaRows.map((m) => m.path),
@@ -101,7 +137,13 @@ export async function fetchSharedProject(token: string): Promise<SharedProjectDa
 
   return {
     project: project as SharedProjectData['project'],
-    scenes: sceneRows.map((s) => ({ ...s, media: mediaByScene[s.id] ?? [] })),
+    scenes: sceneRows.map((s) => ({
+      ...s,
+      media: mediaByScene[s.id] ?? [],
+      best_cost: bestCost[s.id] ?? null,
+      quote_count: quoteCount[s.id] ?? 0,
+      order_count: orderCount[s.id] ?? 0,
+    })),
     signedUrls,
   };
 }
