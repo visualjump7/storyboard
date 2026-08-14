@@ -74,7 +74,7 @@ export function MediaStrip({
         <input
           ref={fileRef}
           type="file"
-          accept="image/*,video/*"
+          accept="image/*,video/*,audio/*"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -107,6 +107,14 @@ export function MediaStrip({
                       <Play size={8} />
                     </span>
                   </>
+                )}
+                {item.kind === 'audio' && (
+                  <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-[#7a7a86]">
+                    <Play size={16} />
+                    <span className="text-[9px] uppercase tracking-wide">
+                      {item.path.split('.').pop()?.slice(0, 4) ?? 'audio'}
+                    </span>
+                  </span>
                 )}
                 {!url && item.kind === 'image' && (
                   <span className="absolute inset-0 flex items-center justify-center">
@@ -203,6 +211,14 @@ function Lightbox({
             src={url}
             alt=""
             className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain shadow-slideover"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : media.kind === 'audio' && url ? (
+          <audio
+            controls
+            preload="metadata"
+            src={url}
+            className="w-[min(560px,85vw)] rounded-lg"
             onClick={(e) => e.stopPropagation()}
           />
         ) : url ? (

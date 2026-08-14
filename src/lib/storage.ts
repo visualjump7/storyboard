@@ -15,20 +15,33 @@ const EXT_FROM_MIME: Record<string, string> = {
   'video/quicktime': 'mov',
   'video/webm': 'webm',
   'video/x-m4v': 'm4v',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/flac': 'flac',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/ogg': 'ogg',
 };
 
 const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v']);
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg']);
 
 function extFor(file: File): string {
   const fromName = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : '';
   return EXT_FROM_MIME[file.type] ?? (fromName || 'bin');
 }
 
-/** Classify a picked file as image or video (mime first, extension fallback). */
+/** Classify a picked file as image, video or audio (mime first, ext fallback). */
 export function mediaKindFor(file: File): MediaKind {
   if (file.type.startsWith('video/')) return 'video';
+  if (file.type.startsWith('audio/')) return 'audio';
   if (file.type.startsWith('image/')) return 'image';
-  return VIDEO_EXTS.has(extFor(file)) ? 'video' : 'image';
+  const ext = extFor(file);
+  if (VIDEO_EXTS.has(ext)) return 'video';
+  if (AUDIO_EXTS.has(ext)) return 'audio';
+  return 'image';
 }
 
 /**

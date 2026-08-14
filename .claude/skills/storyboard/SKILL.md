@@ -10,7 +10,7 @@ directly to the same Supabase backend the deployed web app reads from, so anythi
 add appears in the browser instantly. Never tell the user to use the browser to do
 something this CLI can do.
 
-Projects come in three kinds:
+Projects come in five kinds:
 - **storyboard** — film boards: scenes with a prompt and one image.
 - **social** — post pipelines: posts with copy, multiple media (images/video),
   a schedule, a status (idea/draft/ready/scheduled/posted), and platforms.
@@ -20,6 +20,35 @@ Projects come in three kinds:
   (concept/sourcing/quotes/orders/ready). Underneath it sit **many suppliers**
   (each optionally carrying a quote) and **many orders**. Margin is derived
   from the cheapest quote against the sale price — never stored.
+
+- **game** — playable games: screenshots, an optional short video, a summary, a
+  play link, and a stage (prototype/in_development/playable/released).
+- **music** — tracks headed for Spotify: cover art, the audio itself, a summary,
+  a listen link, and a stage (demo/recorded/mixed/mastered/submitted/released).
+
+## Games and music
+
+Both use the same commands — media, a summary, and `--link` for where to play
+or listen:
+
+```
+npm run sb -- project add "Games" --kind game
+npm run sb -- add --name "Echo Runner" --desc "Endless runner. Three biomes." \
+  --link "https://itch.io/…" --status playable
+npm run sb -- media 1 add ./screen1.png ./screen2.png ./trailer.mp4
+
+npm run sb -- project add "Music" --kind music
+npm run sb -- add --name "Guardian Theme" --desc "Main title cue, 2:14" \
+  --link "https://open.spotify.com/track/…" --status mastered
+npm run sb -- media 1 add ./cover.png ./guardian-theme.wav
+```
+
+- Audio uploads (mp3/wav/flac/m4a/aac/ogg) are classified automatically and get
+  a player in the app and on the share page. Cover art is just an image on the
+  same track.
+- `--link` only applies to game and music projects; it errors elsewhere.
+- Stages differ per kind — `--status playable` is a game stage, `--status
+  mastered` a music one; the CLI validates against the project's own kind.
 
 ## Merchandise: research is the job
 

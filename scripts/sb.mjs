@@ -309,6 +309,12 @@ const EXT_TO_CT = {
   mov: 'video/quicktime',
   webm: 'video/webm',
   m4v: 'video/x-m4v',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  flac: 'audio/flac',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
 };
 const CT_TO_EXT = {
   'image/png': 'png',
@@ -320,8 +326,17 @@ const CT_TO_EXT = {
   'video/quicktime': 'mov',
   'video/webm': 'webm',
   'video/x-m4v': 'm4v',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/flac': 'flac',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/ogg': 'ogg',
 };
 const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v']);
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg']);
 
 async function loadMedia(src) {
   let buffer;
@@ -344,7 +359,12 @@ async function loadMedia(src) {
     ext = extname(src).slice(1).toLowerCase() || 'png';
     contentType = EXT_TO_CT[ext] || 'application/octet-stream';
   }
-  const kind = contentType.startsWith('video/') || VIDEO_EXTS.has(ext) ? 'video' : 'image';
+  const kind =
+    contentType.startsWith('video/') || VIDEO_EXTS.has(ext)
+      ? 'video'
+      : contentType.startsWith('audio/') || AUDIO_EXTS.has(ext)
+        ? 'audio'
+        : 'image';
   if (kind === 'video' && ext === 'mov') {
     console.error(
       'note: .mov often won’t play in Chrome/Firefox — prefer .mp4 (H.264/AAC) for the share page.',
@@ -409,6 +429,8 @@ const STATUSES = ['idea', 'draft', 'ready', 'scheduled', 'posted'];
 // union of both lists; the CLI validates against the project's own kind.
 const MERCH_STATUSES = ['concept', 'sourcing', 'quotes', 'orders', 'ready'];
 const ORDER_STATUSES = ['placed', 'in_production', 'shipped', 'received', 'cancelled'];
+const GAME_STATUSES = ['prototype', 'in_development', 'playable', 'released'];
+const MUSIC_STATUSES = ['demo', 'recorded', 'mixed', 'mastered', 'submitted', 'released'];
 
 const KNOWN_PLATFORMS = [
   'linkedin',
@@ -430,7 +452,11 @@ const PLATFORM_ALIASES = {
 };
 
 function parseStatusFlag(value, kind = 'social') {
-  const allowed = kind === 'merchandise' ? MERCH_STATUSES : STATUSES;
+  const allowed =
+    kind === 'merchandise' ? MERCH_STATUSES
+    : kind === 'game' ? GAME_STATUSES
+    : kind === 'music' ? MUSIC_STATUSES
+    : STATUSES;
   const v = String(value).toLowerCase().trim();
   if (!allowed.includes(v)) {
     throw new Error(`Invalid --status "${value}". One of: ${allowed.join(', ')}`);
@@ -575,6 +601,8 @@ function resolveLine(rows, ref, what) {
 function rowNoun(kind) {
   if (kind === 'social') return 'post';
   if (kind === 'merchandise') return 'item';
+  if (kind === 'game') return 'game';
+  if (kind === 'music') return 'track';
   return 'scene';
 }
 
@@ -583,6 +611,8 @@ function rowNoun(kind) {
  * items; only storyboard scenes use the single image_path instead.
  */
 function assertHasMedia(project, what) {
+  // Everything except storyboard uses scene_media; storyboard scenes keep
+  // their single image_path instead.
   if (projectKind(project) === 'storyboard') {
     throw new Error(
       `"${project.name}" is a storyboard project — ${what} needs a social or ` +
@@ -596,6 +626,17 @@ function assertSocial(project, what) {
     throw new Error(
       `"${project.name}" is a ${projectKind(project)} project — ${what} only applies to social ` +
         'projects. Create one with:  sb project add "Name" --social',
+    );
+  }
+}
+
+/** game and music share the showcase surface (media + summary + link + stage). */
+function assertShowcase(project, what) {
+  const kind = projectKind(project);
+  if (kind !== 'game' && kind !== 'music') {
+    throw new Error(
+      `"${project.name}" is a ${kind} project — ${what} only applies to game or ` +
+        'music projects. Create one with:  sb project add "Name" --kind game',
     );
   }
 }
@@ -682,16 +723,16 @@ async function cmdProject(positional, flags) {
     else if (typeof flags.kind === 'string') {
       kind = flags.kind.toLowerCase().trim();
       if (kind === 'merch') kind = 'merchandise';
-      if (kind !== 'storyboard' && kind !== 'social' && kind !== 'merchandise') {
+      if (kind === 'games') kind = 'game';
+      if (!['storyboard', 'social', 'merchandise', 'game', 'music'].includes(kind)) {
         throw new Error(
-          `Invalid --kind "${flags.kind}". Use storyboard, social, or merchandise.`,
+          `Invalid --kind "${flags.kind}". Use storyboard, social, merchandise, game, or music.`,
         );
       }
     }
     const p = await createProject(name, kind);
     await setCurrentProject(p.id);
-    const label =
-      kind === 'social' ? 'social project' : kind === 'merchandise' ? 'merchandise project' : 'project';
+    const label = kind === 'storyboard' ? 'project' : `${kind} project`;
     console.log(`Created ${label} "${p.name}" (${p.id.slice(0, 8)}) and made it current.`);
     return;
   }
@@ -737,7 +778,40 @@ async function cmdList(flags) {
   announce(project);
   const scenes = await orderedScenes(project.id);
 
-  if (projectKind(project) === 'merchandise') {
+  const listKind = projectKind(project);
+  if (listKind === 'game' || listKind === 'music') {
+    const noun = rowNoun(listKind);
+    if (scenes.length === 0) {
+      console.log(`No ${noun}s yet. Add one with: npm run sb -- add --name "Title"`);
+      return;
+    }
+    const { data: mediaRows, error } = await db()
+      .from('scene_media')
+      .select('scene_id, kind')
+      .in('scene_id', scenes.map((s) => s.id));
+    if (error) throw error;
+    const counts = {};
+    (mediaRows ?? []).forEach((m) => {
+      const c = (counts[m.scene_id] ??= { image: 0, video: 0, audio: 0 });
+      c[m.kind] = (c[m.kind] ?? 0) + 1;
+    });
+
+    console.log(`${scenes.length} ${noun}(s):\n`);
+    scenes.forEach((s, i) => {
+      const num = String(i + 1).padStart(2, ' ');
+      const name = truncate(s.name || '(untitled)', 28).padEnd(28, ' ');
+      const c = counts[s.id] ?? { image: 0, video: 0, audio: 0 };
+      console.log(`${num}. ${name}  ${s.id.slice(0, 8)}`);
+      const parts = [`stage: ${s.status}`, `images: ${c.image}`, `video: ${c.video}`];
+      if (listKind === 'music') parts.push(`audio: ${c.audio}`);
+      console.log(`      ${parts.join(' · ')}`);
+      if (s.link_url) console.log(`      link: ${truncate(s.link_url, 80)}`);
+      if (s.description) console.log(`      summary: ${truncate(s.description, 90)}`);
+    });
+    return;
+  }
+
+  if (listKind === 'merchandise') {
     if (scenes.length === 0) {
       console.log('Board is empty. Add an item with: npm run sb -- add --name "Plushie"');
       return;
@@ -851,6 +925,7 @@ async function cmdAdd(flags) {
   const kind = projectKind(project);
   const merchFlagUsed =
     typeof flags.price === 'string' || typeof flags['dev-time'] === 'string';
+  const showcaseFlagUsed = typeof flags.link === 'string';
   const socialFlagUsed =
     typeof flags.copy === 'string' ||
     typeof flags.schedule === 'string' ||
@@ -859,6 +934,7 @@ async function cmdAdd(flags) {
   const mediaFlagUsed = Array.isArray(flags.media);
 
   if (merchFlagUsed) assertMerch(project, 'that flag set (--price/--dev-time)');
+  if (showcaseFlagUsed) assertShowcase(project, '--link');
   if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms)');
   if (mediaFlagUsed) assertHasMedia(project, '--media');
   if (typeof flags.image === 'string') assertStoryboard(project, '--image');
@@ -884,6 +960,10 @@ async function cmdAdd(flags) {
   // Merchandise sourcing fields.
   if (typeof flags.price === 'string') row.sale_price = parseMoneyFlag(flags.price, '--price');
   if (typeof flags['dev-time'] === 'string') row.dev_time = flags['dev-time'];
+  if (typeof flags.link === 'string') row.link_url = flags.link.trim();
+  if ((kind === 'game' || kind === 'music') && row.status === undefined) {
+    row.status = kind === 'game' ? 'prototype' : 'demo';
+  }
   // New merchandise rows start at the board's first stage, not the column
   // default 'draft' (a social stage), so they don't land off-board.
   if (kind === 'merchandise' && row.status === undefined) row.status = 'idea';
@@ -942,12 +1022,14 @@ async function cmdSet(positional, flags) {
   const kind = projectKind(project);
   const merchFlagUsed =
     typeof flags.price === 'string' || typeof flags['dev-time'] === 'string';
+  const showcaseFlagUsed = typeof flags.link === 'string';
   const socialFlagUsed =
     typeof flags.copy === 'string' ||
     typeof flags.schedule === 'string' ||
     typeof flags.platforms === 'string';
 
   if (merchFlagUsed) assertMerch(project, 'that flag set (--price/--dev-time)');
+  if (showcaseFlagUsed) assertShowcase(project, '--link');
   if (socialFlagUsed) assertSocial(project, 'that flag set (--copy/--schedule/--platforms)');
   if (typeof flags.status === 'string' && kind === 'storyboard') {
     assertSocial(project, '--status');
@@ -964,6 +1046,7 @@ async function cmdSet(positional, flags) {
   if (typeof flags.platforms === 'string') patch.platforms = parsePlatformsFlag(flags.platforms);
   if (typeof flags.price === 'string') patch.sale_price = parseMoneyFlag(flags.price, '--price');
   if (typeof flags['dev-time'] === 'string') patch.dev_time = flags['dev-time'];
+  if (typeof flags.link === 'string') patch.link_url = flags.link.trim();
   if (Object.keys(patch).length === 0) {
     throw new Error(
       kind === 'merchandise'
@@ -1177,7 +1260,7 @@ async function cmdMedia(positional, flags) {
     media.forEach((m, i) => {
       const num = String(i + 1).padStart(2, ' ');
       const ext = (m.path.split('.').pop() || '').toLowerCase();
-      const icon = m.kind === 'video' ? '🎞' : '🖼';
+      const icon = m.kind === 'video' ? '🎞' : m.kind === 'audio' ? '🎵' : '🖼';
       console.log(`${num}. ${icon} ${m.kind.padEnd(5, ' ')} .${ext.padEnd(4, ' ')} ${m.id.slice(0, 8)}`);
     });
     return;

@@ -137,6 +137,25 @@ export function Download({ size = 13, className, strokeWidth = 1.8 }: IconProps)
   );
 }
 
+export function Gamepad({ size = 15, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className}>
+      <path d="M7 11h4M9 9v4M15.5 11h.01M18 13h.01" />
+      <path d="M17.3 5H6.7A4.7 4.7 0 0 0 2 9.7L2.6 16a3 3 0 0 0 5.3 1.7l.6-.7h7l.6.7A3 3 0 0 0 21.4 16L22 9.7A4.7 4.7 0 0 0 17.3 5Z" />
+    </Stroke>
+  );
+}
+
+export function Note({ size = 15, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className}>
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </Stroke>
+  );
+}
+
 export function Tag({ size = 15, className }: IconProps) {
   return (
     <Stroke size={size} className={className}>

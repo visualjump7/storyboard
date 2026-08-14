@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { MerchCatalog } from '@/components/MerchCatalog';
 import { PostPipeline } from '@/components/PostPipeline';
+import { ShowcaseCatalog } from '@/components/ShowcaseCatalog';
 import { Storyboard } from '@/components/Storyboard';
 import { fetchProject } from '@/lib/projects';
 import { createClient } from '@/lib/supabase/server';
@@ -25,5 +26,8 @@ export default async function ProjectPage({ params }: { params: { projectId: str
   // storyboard untouched.
   if (project.kind === 'social') return <PostPipeline userId={user.id} project={project} />;
   if (project.kind === 'merchandise') return <MerchCatalog userId={user.id} project={project} />;
+  if (project.kind === 'game' || project.kind === 'music') {
+    return <ShowcaseCatalog kind={project.kind} userId={user.id} project={project} />;
+  }
   return <Storyboard userId={user.id} project={project} />;
 }

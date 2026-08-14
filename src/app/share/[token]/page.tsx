@@ -2,6 +2,15 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { ShareView } from '@/components/ShareView';
 import { fetchSharedProject } from '@/lib/share';
+import type { ProjectKind } from '@/lib/types';
+
+const SHARE_KIND_LABELS: Record<ProjectKind, string> = {
+  storyboard: 'Storyboard',
+  social: 'Social',
+  merchandise: 'Merchandise',
+  game: 'Games',
+  music: 'Music',
+};
 
 // Token lookup + fresh signed URLs on every request.
 export const dynamic = 'force-dynamic';
@@ -37,11 +46,7 @@ export default async function SharePage({ params }: { params: { token: string } 
               : 'border border-line-2 bg-field text-muted',
           ].join(' ')}
         >
-          {project.kind === 'social'
-            ? 'Social'
-            : project.kind === 'merchandise'
-              ? 'Merchandise'
-              : 'Storyboard'}
+          {SHARE_KIND_LABELS[project.kind] ?? 'Storyboard'}
         </span>
         <div className="flex-1" />
         <span className="text-[12px] text-muted">Shared board · read-only</span>

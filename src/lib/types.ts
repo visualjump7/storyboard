@@ -2,7 +2,60 @@
  * Which UI a project gets: a film storyboard, a social-post pipeline, or a
  * merchandise tracking board.
  */
-export type ProjectKind = 'storyboard' | 'social' | 'merchandise';
+export type ProjectKind = 'storyboard' | 'social' | 'merchandise' | 'game' | 'music';
+
+/**
+ * Kinds that share the showcase surface: an item with media, a summary, a
+ * link out, and a stage.
+ */
+export type ShowcaseKind = Extract<ProjectKind, 'game' | 'music'>;
+
+/** Stages a game moves through. */
+export const GAME_STATUSES = ['prototype', 'in_development', 'playable', 'released'] as const;
+export type GameStatus = (typeof GAME_STATUSES)[number];
+
+/** Stages a track moves through, ending at a Spotify submission. */
+export const MUSIC_STATUSES = ['demo', 'recorded', 'mixed', 'mastered', 'submitted', 'released'] as const;
+export type MusicStatus = (typeof MUSIC_STATUSES)[number];
+
+export const SHOWCASE_STATUS_LABELS: Record<GameStatus | MusicStatus, string> = {
+  prototype: 'Prototype',
+  in_development: 'In development',
+  playable: 'Playable',
+  released: 'Released',
+  demo: 'Demo',
+  recorded: 'Recorded',
+  mixed: 'Mixed',
+  mastered: 'Mastered',
+  submitted: 'Submitted',
+};
+
+/** The stages, link label, and wording that differ between game and music. */
+export const SHOWCASE_META: Record<
+  ShowcaseKind,
+  {
+    noun: { one: string; many: string };
+    statuses: readonly (GameStatus | MusicStatus)[];
+    linkLabel: string;
+    linkPlaceholder: string;
+    openLabel: string;
+  }
+> = {
+  game: {
+    noun: { one: 'game', many: 'games' },
+    statuses: GAME_STATUSES,
+    linkLabel: 'Play link',
+    linkPlaceholder: 'https://itch.io/…',
+    openLabel: 'Play',
+  },
+  music: {
+    noun: { one: 'track', many: 'tracks' },
+    statuses: MUSIC_STATUSES,
+    linkLabel: 'Listen link',
+    linkPlaceholder: 'https://open.spotify.com/…',
+    openLabel: 'Listen',
+  },
+};
 
 /** Pipeline stages for a social post. Mirrors the DB CHECK on scenes.status. */
 export const POST_STATUSES = ['idea', 'draft', 'ready', 'scheduled', 'posted'] as const;
@@ -17,7 +70,7 @@ export const MERCH_STATUSES = ['concept', 'sourcing', 'quotes', 'orders', 'ready
 export type MerchStatus = (typeof MERCH_STATUSES)[number];
 
 /** Every value `scenes.status` can hold, across all project kinds. */
-export type SceneStatus = PostStatus | MerchStatus;
+export type SceneStatus = PostStatus | MerchStatus | GameStatus | MusicStatus;
 
 /**
  * Narrow a stored status to a social one. A row carrying a merchandise stage
@@ -49,7 +102,7 @@ export const MERCH_STATUS_LABELS: Record<MerchStatus, string> = {
   ready: 'Ready',
 };
 
-export type MediaKind = 'image' | 'video';
+export type MediaKind = 'image' | 'video' | 'audio';
 
 /** A project — one storyboard or one social pipeline (Postgres `projects` table). */
 export interface Project {
@@ -97,8 +150,32 @@ export interface Scene {
   sale_price: number | null;
   /** Merchandise: overall development time, e.g. '4–6 weeks'. */
   dev_time: string;
+  /** Game/music: where to play or listen ('' if not published yet). */
+  link_url: string;
   created_at: string;
   updated_at: string;
+}
+
+/** The fields a showcase (game/music) item can write. */
+export interface ShowcaseFields {
+  name: string;
+  description: string;
+  status: GameStatus | MusicStatus;
+  link_url: string;
+}
+
+/**
+ * Narrow a stored status to one valid for this showcase kind, defaulting to
+ * that kind's first stage so an item never renders a meaningless label.
+ */
+export function asShowcaseStatus(
+  kind: ShowcaseKind,
+  status: SceneStatus | string,
+): GameStatus | MusicStatus {
+  const allowed = SHOWCASE_META[kind].statuses;
+  return (allowed as readonly string[]).includes(status)
+    ? (status as GameStatus | MusicStatus)
+    : allowed[0];
 }
 
 /** The product-level fields a merchandise row can write. */

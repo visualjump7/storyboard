@@ -31,6 +31,8 @@ export interface SharedScene {
   /** Merchandise: anyone with the link can read these. */
   sale_price: number | null;
   dev_time: string;
+  /** Game/music: where to play or listen. */
+  link_url: string;
   created_at: string;
   media: SharedMedia[];
   /** Merchandise: cheapest quoted unit cost, or null if nothing is quoted. */
@@ -69,7 +71,7 @@ export async function fetchSharedProject(token: string): Promise<SharedProjectDa
   const { data: scenes, error: scenesError } = await admin
     .from('scenes')
     .select(
-      'id, order_index, name, description, copy, status, scheduled_at, platforms, image_path, sale_price, dev_time, created_at',
+      'id, order_index, name, description, copy, status, scheduled_at, platforms, image_path, sale_price, dev_time, link_url, created_at',
     )
     .eq('project_id', project.id)
     .order('order_index', { ascending: true });

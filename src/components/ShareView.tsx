@@ -2,7 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import type { SharedMedia, SharedScene } from '@/lib/share';
-import { MERCH_STATUS_LABELS, asMerchStatus, type ProjectKind } from '@/lib/types';
+import {
+  MERCH_STATUS_LABELS,
+  SHOWCASE_META,
+  SHOWCASE_STATUS_LABELS,
+  asMerchStatus,
+  asShowcaseStatus,
+  type ProjectKind,
+  type ShowcaseKind,
+} from '@/lib/types';
 import { formatMoney, marginPercent } from '@/lib/merch';
 import { splitPipeline, formatScheduleTime } from '@/lib/pipeline';
 import { PlatformChips, StatusBadge } from './PostBadges';
@@ -30,7 +38,98 @@ export function ShareView({ kind, scenes, urls }: ShareViewProps) {
   }
   if (kind === 'social') return <SocialShare scenes={scenes} urls={urls} />;
   if (kind === 'merchandise') return <MerchShare scenes={scenes} urls={urls} />;
+  if (kind === 'game' || kind === 'music') {
+    return <ShowcaseShare kind={kind} scenes={scenes} urls={urls} />;
+  }
   return <StoryboardShare scenes={scenes} urls={urls} />;
+}
+
+// ---------------------------------------------------------------------------
+// Games / music: cover, summary, playable media, and a link out
+// ---------------------------------------------------------------------------
+
+function ShowcaseShare({
+  kind,
+  scenes,
+  urls,
+}: {
+  kind: ShowcaseKind;
+  scenes: SharedScene[];
+  urls: Record<string, string>;
+}) {
+  const meta = SHOWCASE_META[kind];
+  return (
+    <div className="mx-auto max-w-[1180px] px-[26px] pb-24 pt-8">
+      <div className="flex flex-wrap content-start gap-[22px]">
+        {scenes.map((item) => {
+          const audio = item.media.filter((m) => m.kind === 'audio');
+          const visual = item.media.filter((m) => m.kind !== 'audio');
+          const link = item.link_url?.trim() ?? '';
+          const linkIsHttp = /^https?:\/\//i.test(link);
+          return (
+            <div
+              key={item.id}
+              className="w-[340px] max-w-full flex-none overflow-hidden rounded-xl border border-line bg-card shadow-card"
+            >
+              {/* An audio-only track has media, just nothing to show — the
+                  player below carries it, so skip the empty-looking well. */}
+              {(visual.length > 0 || audio.length === 0) && (
+                <MediaCarousel
+                  media={visual}
+                  urls={urls}
+                  alt={item.name || meta.noun.one}
+                  statusBadge={
+                    <span className="flex h-[20px] items-center rounded border border-[#32323c] bg-[rgba(12,12,14,0.82)] px-1.5 text-[9.5px] font-medium uppercase tracking-wide text-[#b4b4be] backdrop-blur">
+                      {SHOWCASE_STATUS_LABELS[asShowcaseStatus(kind, item.status)]}
+                    </span>
+                  }
+                />
+              )}
+              <div className="px-4 pb-4 pt-3">
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold tracking-[-0.01em] text-bright">
+                    {item.name || `Untitled ${meta.noun.one}`}
+                  </span>
+                  {visual.length === 0 && audio.length > 0 && (
+                    <span className="flex h-[20px] flex-none items-center rounded border border-[#32323c] bg-[#22222a] px-1.5 text-[9.5px] font-medium uppercase tracking-wide text-[#b4b4be]">
+                      {SHOWCASE_STATUS_LABELS[asShowcaseStatus(kind, item.status)]}
+                    </span>
+                  )}
+                </div>
+                {item.description && (
+                  <p className="mt-2 whitespace-pre-wrap text-[13px] leading-[1.6] text-[#cfcfd4]">
+                    {item.description}
+                  </p>
+                )}
+                {audio.map((track) =>
+                  urls[track.path] ? (
+                    // eslint-disable-next-line jsx-a11y/media-has-caption
+                    <audio
+                      key={track.id}
+                      controls
+                      preload="metadata"
+                      src={urls[track.path]}
+                      className="mt-3 w-full"
+                    />
+                  ) : null,
+                )}
+                {link && linkIsHttp && (
+                  <a
+                    href={link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 inline-flex h-[30px] items-center gap-1.5 rounded-lg border border-accent bg-accent/10 px-3 text-[12.5px] font-medium text-accent transition-opacity hover:opacity-80"
+                  >
+                    {meta.openLabel} ↗
+                  </a>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
