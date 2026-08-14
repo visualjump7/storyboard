@@ -15,8 +15,15 @@ import {
   updateSceneFields,
 } from '@/lib/scenes';
 import { fetchProjects } from '@/lib/projects';
+import {
+  addSceneMedia,
+  fetchMediaForScenes,
+  persistMediaOrder,
+  removeSceneMediaItem,
+} from '@/lib/media';
+import { useSignedUrls } from '@/hooks/useSignedUrls';
 import { signImageDownloadUrl } from '@/lib/storage';
-import type { Project, Scene, SceneTextFields } from '@/lib/types';
+import type { Project, Scene, SceneMedia, SceneTextFields } from '@/lib/types';
 import { Grid } from './Grid';
 import { SceneDetail } from './SceneDetail';
 import { ScriptPanel } from './ScriptPanel';
@@ -39,6 +46,8 @@ export function Storyboard({ userId, project }: StoryboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [mediaMap, setMediaMap] = useState<Record<string, SceneMedia[]>>({});
+  const [uploadingMedia, setUploadingMedia] = useState(false);
 
   const [cardSize, setCardSize] = useLocalStorage('storyboard:cardSize', DEFAULT_SIZE);
   const [scriptOpen, setScriptOpen] = useLocalStorage('storyboard:scriptOpen', false);
@@ -49,8 +58,11 @@ export function Storyboard({ userId, project }: StoryboardProps) {
     setScenes(null);
     setDetailId(null);
     fetchScenes(supabase, project.id)
-      .then((rows) => {
-        if (active) setScenes(rows);
+      .then(async (rows) => {
+        if (!active) return;
+        setScenes(rows);
+        const media = await fetchMediaForScenes(supabase, rows.map((r) => r.id));
+        if (active) setMediaMap(media);
       })
       .catch((e) => {
         if (active) setError(e?.message ?? 'Failed to load scenes.');
@@ -107,6 +119,12 @@ export function Storyboard({ userId, project }: StoryboardProps) {
 
   const list = useMemo(() => scenes ?? [], [scenes]);
   const imageUrls = useSceneImageUrls(supabase, list);
+
+  const mediaPaths = useMemo(
+    () => Object.values(mediaMap).flat().map((m) => m.path),
+    [mediaMap],
+  );
+  const mediaUrls = useSignedUrls(supabase, mediaPaths);
 
   // --- mutations (optimistic local state + persistence) ---
 
@@ -190,6 +208,60 @@ export function Storyboard({ userId, project }: StoryboardProps) {
       } catch (e) {
         setError((e as Error)?.message ?? 'Failed to download image.');
       }
+    },
+    [supabase],
+  );
+
+  // --- clips & extra frames (scene_media, alongside the hero still) ---
+
+  const handleAddMedia = useCallback(
+    async (scene: Scene, files: File[]) => {
+      setUploadingMedia(true);
+      try {
+        let position = mediaMap[scene.id]?.length ?? 0;
+        for (const file of files) {
+          // Sequential so positions land in pick order; each success merges
+          // immediately, so a later failure keeps what already uploaded.
+          const created = await addSceneMedia(supabase, userId, scene.id, file, position);
+          position++;
+          setMediaMap((prev) => ({
+            ...prev,
+            [scene.id]: [...(prev[scene.id] ?? []), created],
+          }));
+        }
+      } catch (e) {
+        setError((e as Error)?.message ?? 'Media upload failed.');
+      } finally {
+        setUploadingMedia(false);
+      }
+    },
+    [supabase, userId, mediaMap],
+  );
+
+  const handleRemoveMedia = useCallback(
+    async (scene: Scene, media: SceneMedia) => {
+      setMediaMap((prev) => ({
+        ...prev,
+        [scene.id]: (prev[scene.id] ?? []).filter((m) => m.id !== media.id),
+      }));
+      try {
+        await removeSceneMediaItem(supabase, media);
+      } catch (e) {
+        setError((e as Error)?.message ?? 'Failed to remove media.');
+      }
+    },
+    [supabase],
+  );
+
+  const handleReorderMedia = useCallback(
+    (scene: Scene, ordered: SceneMedia[]) => {
+      setMediaMap((prev) => ({
+        ...prev,
+        [scene.id]: ordered.map((m, i) => ({ ...m, position: i })),
+      }));
+      void persistMediaOrder(supabase, ordered).catch((e) =>
+        setError((e as Error)?.message ?? 'Failed to save media order.'),
+      );
     },
     [supabase],
   );
@@ -301,6 +373,9 @@ export function Storyboard({ userId, project }: StoryboardProps) {
           scene={currentScene}
           number={detailIndex + 1}
           imageUrl={currentScene.image_path ? imageUrls[currentScene.image_path] : undefined}
+          media={mediaMap[currentScene.id] ?? []}
+          mediaUrls={mediaUrls}
+          uploadingMedia={uploadingMedia}
           onClose={() => setDetailId(null)}
           onPrev={() => step(-1)}
           onNext={() => step(1)}
@@ -308,6 +383,9 @@ export function Storyboard({ userId, project }: StoryboardProps) {
           onUploadImage={handleUploadImage}
           onRemoveImage={handleRemoveImage}
           onDownloadImage={handleDownloadImage}
+          onAddMedia={handleAddMedia}
+          onRemoveMedia={handleRemoveMedia}
+          onReorderMedia={handleReorderMedia}
           onDelete={handleDelete}
         />
       )}

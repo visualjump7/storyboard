@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import type { Scene, SceneTextFields } from '@/lib/types';
+import type { Scene, SceneMedia, SceneTextFields } from '@/lib/types';
 import { ChevronLeft, ChevronRight, Close } from './icons';
 import { SceneEditor } from './SceneEditor';
 
@@ -9,6 +9,9 @@ type SceneDetailProps = {
   scene: Scene;
   number: number;
   imageUrl?: string;
+  media: SceneMedia[];
+  mediaUrls: Record<string, string>;
+  uploadingMedia: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -16,6 +19,9 @@ type SceneDetailProps = {
   onUploadImage: (scene: Scene, file: File) => Promise<void>;
   onRemoveImage: (scene: Scene) => Promise<void>;
   onDownloadImage: (scene: Scene) => Promise<void>;
+  onAddMedia: (scene: Scene, files: File[]) => void;
+  onRemoveMedia: (scene: Scene, media: SceneMedia) => void;
+  onReorderMedia: (scene: Scene, ordered: SceneMedia[]) => void;
   onDelete: (scene: Scene) => void;
 };
 
@@ -23,6 +29,9 @@ export function SceneDetail({
   scene,
   number,
   imageUrl,
+  media,
+  mediaUrls,
+  uploadingMedia,
   onClose,
   onPrev,
   onNext,
@@ -30,6 +39,9 @@ export function SceneDetail({
   onUploadImage,
   onRemoveImage,
   onDownloadImage,
+  onAddMedia,
+  onRemoveMedia,
+  onReorderMedia,
   onDelete,
 }: SceneDetailProps) {
   // Keyboard: ← / → step scenes, Esc closes. Arrows are ignored while typing in
@@ -91,10 +103,16 @@ export function SceneDetail({
           key={scene.id}
           scene={scene}
           imageUrl={imageUrl}
+          media={media}
+          mediaUrls={mediaUrls}
+          uploadingMedia={uploadingMedia}
           onSaveFields={onSaveFields}
           onUploadImage={onUploadImage}
           onRemoveImage={onRemoveImage}
           onDownloadImage={onDownloadImage}
+          onAddMedia={onAddMedia}
+          onRemoveMedia={onRemoveMedia}
+          onReorderMedia={onReorderMedia}
           onDelete={onDelete}
         />
       </div>

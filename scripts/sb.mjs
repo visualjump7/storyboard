@@ -610,15 +610,13 @@ function rowNoun(kind) {
  * Multi-media rows (scene_media) back both social posts and merchandise
  * items; only storyboard scenes use the single image_path instead.
  */
-function assertHasMedia(project, what) {
-  // Everything except storyboard uses scene_media; storyboard scenes keep
-  // their single image_path instead.
-  if (projectKind(project) === 'storyboard') {
-    throw new Error(
-      `"${project.name}" is a storyboard project — ${what} needs a social or ` +
-        'merchandise project. Storyboard scenes take a single --image instead.',
-    );
-  }
+/**
+ * Every kind can carry scene_media. Storyboard scenes additionally keep their
+ * single hero still in image_path — --image sets that, --media attaches the
+ * rendered clips and extra frames alongside it.
+ */
+function assertHasMedia() {
+  /* no kind restriction */
 }
 
 function assertSocial(project, what) {

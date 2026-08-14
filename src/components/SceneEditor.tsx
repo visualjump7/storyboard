@@ -1,29 +1,43 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import type { Scene, SceneTextFields } from '@/lib/types';
+import type { Scene, SceneMedia, SceneTextFields } from '@/lib/types';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
 import { Download, Spinner, Trash, Upload } from './icons';
+import { MediaStrip } from './MediaStrip';
 
 type SceneEditorProps = {
   /** The live scene. Keyed by scene.id by the parent, so navigating to another
    * scene remounts this with fresh form state. */
   scene: Scene;
   imageUrl?: string;
+  /** Rendered clips / extra frames attached alongside the hero still. */
+  media: SceneMedia[];
+  mediaUrls: Record<string, string>;
+  uploadingMedia: boolean;
   onSaveFields: (id: string, fields: SceneTextFields) => void;
   onUploadImage: (scene: Scene, file: File) => Promise<void>;
   onRemoveImage: (scene: Scene) => Promise<void>;
   onDownloadImage: (scene: Scene) => Promise<void>;
+  onAddMedia: (scene: Scene, files: File[]) => void;
+  onRemoveMedia: (scene: Scene, media: SceneMedia) => void;
+  onReorderMedia: (scene: Scene, ordered: SceneMedia[]) => void;
   onDelete: (scene: Scene) => void;
 };
 
 export function SceneEditor({
   scene,
   imageUrl,
+  media,
+  mediaUrls,
+  uploadingMedia,
   onSaveFields,
   onUploadImage,
   onRemoveImage,
   onDownloadImage,
+  onAddMedia,
+  onRemoveMedia,
+  onReorderMedia,
   onDelete,
 }: SceneEditorProps) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -174,6 +188,24 @@ export function SceneEditor({
             <Spinner size={26} className="animate-spin" />
           </div>
         )}
+      </div>
+
+      {/* Rendered clips and extra frames, alongside the hero still above. */}
+      <div className="mt-4">
+        <div className="mb-2 flex items-center gap-[7px]">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-muted">
+            Clips &amp; frames
+          </span>
+          <span className="text-[10.5px] text-[#52525a]">rendered sequences, extra stills</span>
+        </div>
+        <MediaStrip
+          media={media}
+          mediaUrls={mediaUrls}
+          uploading={uploadingMedia}
+          onAddFiles={(files) => onAddMedia(scene, files)}
+          onRemove={(m) => onRemoveMedia(scene, m)}
+          onReorder={(ordered) => onReorderMedia(scene, ordered)}
+        />
       </div>
 
       {/* Scene name */}

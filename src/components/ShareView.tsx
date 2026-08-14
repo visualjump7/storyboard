@@ -414,29 +414,44 @@ function StoryboardShare({
       <div className="flex flex-wrap content-start gap-[22px]">
         {scenes.map((scene, i) => {
           const url = scene.image_path ? urls[scene.image_path] : undefined;
+          // A scene can carry rendered clips/extra frames in scene_media
+          // alongside its single hero still. When it does, the carousel plays
+          // them; the still stays the fallback for scenes without any.
+          const badge = (
+            <div className="flex h-[22px] items-center rounded-md bg-accent px-[9px] text-[11.5px] font-semibold tracking-[0.01em] text-canvas shadow-badge">
+              Scene {i + 1}
+            </div>
+          );
           return (
             <div
               key={scene.id}
               className="w-[300px] max-w-full flex-none overflow-hidden rounded-xl border border-line bg-card shadow-card"
             >
-              <div className="relative aspect-video w-full bg-well">
-                {url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={url}
-                    alt={scene.name || `Scene ${i + 1}`}
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="absolute inset-0 m-2 flex flex-col items-center justify-center gap-2 rounded-[10px] border-[1.5px] border-dashed border-[#2f2f38] text-[#5a5a63]">
-                    <ImagePlaceholder size={26} />
-                    <span className="text-[11.5px]">No image</span>
-                  </div>
-                )}
-                <div className="absolute left-[9px] top-[9px] flex h-[22px] items-center rounded-md bg-accent px-[9px] text-[11.5px] font-semibold tracking-[0.01em] text-canvas shadow-badge">
-                  Scene {i + 1}
+              {scene.media.length > 0 ? (
+                <MediaCarousel
+                  media={scene.media}
+                  urls={urls}
+                  alt={scene.name || `Scene ${i + 1}`}
+                  statusBadge={badge}
+                />
+              ) : (
+                <div className="relative aspect-video w-full bg-well">
+                  {url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={url}
+                      alt={scene.name || `Scene ${i + 1}`}
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="absolute inset-0 m-2 flex flex-col items-center justify-center gap-2 rounded-[10px] border-[1.5px] border-dashed border-[#2f2f38] text-[#5a5a63]">
+                      <ImagePlaceholder size={26} />
+                      <span className="text-[11.5px]">No image</span>
+                    </div>
+                  )}
+                  <div className="absolute left-[9px] top-[9px]">{badge}</div>
                 </div>
-              </div>
+              )}
               <div className="px-[13px] pb-[13px] pt-3">
                 <div className="truncate text-[14px] font-semibold tracking-[-0.01em] text-bright">
                   {scene.name || 'Untitled scene'}
