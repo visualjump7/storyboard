@@ -966,7 +966,7 @@ async function cmdAdd(flags) {
   }
   // New merchandise rows start at the board's first stage, not the column
   // default 'draft' (a social stage), so they don't land off-board.
-  if (kind === 'merchandise' && row.status === undefined) row.status = 'idea';
+  if (kind === 'merchandise' && row.status === undefined) row.status = 'concept';
 
   const { data: scene, error } = await db().from('scenes').insert(row).select().single();
   if (error) throw error;
