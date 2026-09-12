@@ -66,6 +66,16 @@ export function ScriptLines({ size = 14, className }: IconProps) {
   );
 }
 
+export function Camera({ size = 15, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className} strokeWidth={1.8}>
+      <rect x="3" y="6" width="13" height="12" rx="2" />
+      <path d="m16 10 5-3v10l-5-3" />
+      <path d="M7 10h5" />
+    </Stroke>
+  );
+}
+
 export function ChevronLeft({ size = 16, className }: IconProps) {
   return (
     <Stroke size={size} className={className}>

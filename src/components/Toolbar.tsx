@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 import type { Project } from '@/lib/types';
-import { GridIcon, Plus, ScriptLines, SignOut } from './icons';
+import { Camera, GridIcon, Plus, ScriptLines, SignOut } from './icons';
 import { ProjectSwitcher } from './ProjectSwitcher';
 
 type ToolbarProps = {
@@ -71,6 +71,16 @@ export function Toolbar({
       </div>
 
       <div className="h-6 w-px bg-[#2a2a32]" />
+
+      <Link
+        href={`/camera-references?project=${encodeURIComponent(project.id)}`}
+        aria-label="Camera References"
+        title="Camera References"
+        className="flex h-[34px] flex-none items-center gap-[7px] rounded-lg border border-accent/25 bg-accent/10 px-2.5 text-[13px] font-medium text-accent transition-colors hover:border-accent/50 hover:bg-accent/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent xl:px-3.5"
+      >
+        <Camera size={15} />
+        <span className="hidden xl:inline">Camera References</span>
+      </Link>
 
       <button
         type="button"

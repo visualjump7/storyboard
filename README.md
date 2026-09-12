@@ -107,6 +107,25 @@ is 50MB — raise it under **Storage → Settings** if you need larger clips.
 
 ## Features
 
+- **Camera References** — a private `/camera-references` page available from the
+  projects header and film storyboard toolbar. Browse all 150 Cinematique
+  catalog entries across seven categories using search, gallery/list views,
+  technique filters, and browser-local saved references. The shot explorer
+  shows original procedural camera/framing studies, with camera path and lens
+  views, play/pause, scrubbing, speed controls, and synchronized two-shot
+  comparisons. Copy a direction or customize its placeholders in a shot brief.
+  Diagrams are illustrative, not source footage or generation results; source
+  attribution and original review states are retained. No model calls or new
+  dependencies are required.
+
+  The imported source is recorded in `src/lib/camera-reference/catalog-data.ts`.
+  To refresh or check it, pass the supplied catalog to
+  `node scripts/import-camera-references.mjs <path-to-catalog.json> [--check]`.
+  With the app running locally, `node scripts/check-camera-references.cjs`
+  checks the existing login and library interactions without writing scenes.
+  It uses an already installed Playwright/Chrome runtime; `PLAYWRIGHT_MODULE`,
+  `CHROME_PATH`, and `CAMERA_QA_URL` can override local paths and the test URL.
+
 - **Auth** — email/password login; unauthenticated users are redirected to
   `/login` by middleware; session persists across refreshes; sign-out in the
   toolbar.

@@ -1,12 +1,13 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { createProject, deleteProject, renameProject } from '@/lib/projects';
 import { formatNextDate } from '@/lib/pipeline';
 import type { Project, ProjectKind } from '@/lib/types';
-import { Gamepad, GridIcon, Note, Pencil, Plus, ScriptLines, SignOut, Tag, Trash } from './icons';
+import { Camera, Gamepad, GridIcon, Note, Pencil, Plus, ScriptLines, SignOut, Tag, Trash } from './icons';
 
 const KIND_LABELS: Record<ProjectKind, string> = {
   storyboard: 'Storyboard',
@@ -90,6 +91,13 @@ export function ProjectsHome({ userId, initialProjects, nextScheduled = {} }: Pr
         </div>
         <span className="text-[15px] font-semibold tracking-[-0.01em]">Storyboard</span>
         <div className="flex-1" />
+        <Link
+          href="/camera-references"
+          className="flex h-[34px] flex-none items-center gap-[7px] rounded-lg border border-accent/25 bg-accent/10 px-3 text-[12px] font-medium text-accent transition-colors hover:border-accent/50 hover:bg-accent/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-3.5 sm:text-[13px]"
+        >
+          <Camera size={15} />
+          Camera References
+        </Link>
         <button
           type="button"
           onClick={handleSignOut}
