@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CameraReference, CameraCategory } from '@/lib/camera-reference/catalog';
 import { lockCameraReferences } from '@/app/camera-references/access-actions';
 import { MotionStudy, supportsMotion, getMotionDescription } from './MotionStudy';
-import { ReferenceVisual } from './ReferenceVisual';
+import { ReferenceVisual, getReferenceStudy, supportsReferenceImage } from './ReferenceVisual';
 import styles from './CameraLibrary.module.css';
 
 type IconName = 'camera' | 'grid' | 'list' | 'compare' | 'search' | 'star' | 'arrow' | 'play' | 'pause' | 'reset' | 'copy' | 'close' | 'sun' | 'frame' | 'cut' | 'story' | 'spark' | 'film' | 'check';
@@ -39,6 +39,7 @@ type Layout = 'grid' | 'list' | 'compare';
 type View = 'split' | 'frame' | 'rig';
 
 function isCamera(r: CameraReference) { return r.category === 'Camera Work'; }
+function hasStudy(r: CameraReference) { return Boolean(getReferenceStudy(r.name)) || (isCamera(r) && supportsMotion(r.name)); }
 
 export function CameraLibrary({ projectId, initialShot, cameraReferences, categories }: {
   projectId?: string; initialShot?: string;
@@ -59,6 +60,11 @@ export function CameraLibrary({ projectId, initialShot, cameraReferences, catego
   const [progress, setProgress] = useState(.35);
   const [speed, setSpeed] = useState(1);
   const [view, setView] = useState<View>('split');
+  const [effectView, setEffectView] = useState<'effect' | 'split' | 'original'>('split');
+  const [sampleImage, setSampleImage] = useState<string>();
+  const sampleImageRef = useRef<string>();
+  const sampleLoadRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [notice, setNotice] = useState('');
   const [briefOpen, setBriefOpen] = useState(false);
   const [briefFields, setBriefFields] = useState<Record<string, string>>({});
@@ -68,6 +74,7 @@ export function CameraLibrary({ projectId, initialShot, cameraReferences, catego
   const briefTriggerRef = useRef<HTMLButtonElement>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout>>();
   const current = cameraReferences.find(r => r.id === selected)!;
+  const studyInfo = getReferenceStudy(current.name);
 
   const notify = useCallback((message: string) => {
     setNotice(message);
@@ -89,6 +96,11 @@ export function CameraLibrary({ projectId, initialShot, cameraReferences, catego
     window.addEventListener('keydown', keys);
     return () => { window.removeEventListener('keydown', keys); clearTimeout(noticeTimer.current); };
   }, [cameraReferences]);
+
+  useEffect(() => () => {
+    sampleLoadRef.current++;
+    if (sampleImageRef.current) URL.revokeObjectURL(sampleImageRef.current);
+  }, []);
 
   useEffect(() => {
     if (!storageReady) return;
@@ -120,18 +132,19 @@ export function CameraLibrary({ projectId, initialShot, cameraReferences, catego
   const filtered = useMemo(() => cameraReferences.filter(r =>
     (category === 'All references' || r.category === category) &&
     (!savedOnly || favorites.includes(r.id)) &&
-    (kind === 'All techniques' || (kind === 'Animated studies' ? supportsMotion(r.name) && isCamera(r) : kind === 'Core palette' ? r.priority === 'Core' : r.function === kind)) &&
+    (kind === 'All techniques' || (kind === 'Animated studies' ? hasStudy(r) : kind === 'Core palette' ? r.priority === 'Core' : r.function === kind)) &&
     (!query.trim() || `${r.name} ${r.id} ${r.meaning} ${r.application} ${r.direction} ${r.function} ${r.category}`.toLowerCase().includes(query.toLowerCase().trim()))
   ), [cameraReferences, category, savedOnly, favorites, kind, query]);
   const functions = useMemo(() => Array.from(new Set(cameraReferences.filter(r => category === 'All references' || r.category === category).map(r => r.function))), [cameraReferences, category]);
   const compared = compare.map(id => cameraReferences.find(r => r.id === id)!).filter(Boolean);
-  const moving = layout === 'compare' ? compared.some(r => isCamera(r) && supportsMotion(r.name)) : isCamera(current) && supportsMotion(current.name);
+  const moving = layout === 'compare' ? compared.some(hasStudy) : hasStudy(current);
   const tokens = Array.from(new Set([...current.direction.matchAll(/\[([^\]]+)\]/g)].map(m => m[1])));
   const builtDirection = current.direction.replace(/\[([^\]]+)\]/g, (match, key: string) => briefFields[key]?.trim() || match);
   const briefText = `${current.name}${purpose.trim() ? `\nPurpose: ${purpose.trim()}` : ''}\n\n${builtDirection}\n\nContinuity check: ${current.watch}\nReference: ${current.source}`;
 
   function choose(r: CameraReference) {
-    setSelected(r.id); setProgress(.35); setPlaying(false);
+    setSelected(r.id); setProgress(getReferenceStudy(r.name) ? .15 : .35);
+    setPlaying(hasStudy(r) && !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     if (layout === 'compare') setLayout('grid');
     const url = new URL(window.location.href); url.searchParams.set('shot', r.slug);
     window.history.replaceState(null, '', url);
@@ -152,15 +165,36 @@ export function CameraLibrary({ projectId, initialShot, cameraReferences, catego
   function closeBrief() { setBriefOpen(false); briefTriggerRef.current?.focus(); }
   function openCompare() {
     if (compare.length === 0) {
-      const second = cameraReferences.find(r => r.name === (current.name === 'Crash Zoom' ? 'Dolly Shot' : 'Crash Zoom'))!;
+      const pair: Record<string, string> = { 'Desaturation': 'Sepia Tone', 'Sepia Tone': 'Desaturation', 'Hard Light': 'Soft Light', 'Soft Light': 'Hard Light', 'Dissolve': 'Wipe', 'Wipe': 'Dissolve', 'Shallow Focus': 'Deep Focus', 'Deep Focus': 'Shallow Focus', 'Broad Lighting': 'Short Lighting', 'Short Lighting': 'Broad Lighting' };
+      const second = cameraReferences.find(r => r.name === (pair[current.name] || (current.name === 'Crash Zoom' ? 'Dolly Shot' : 'Crash Zoom')))!;
       setCompare([current.id, second.id]);
     }
     setLayout('compare'); setPlaying(false);
   }
 
-  const visual = (r: CameraReference, compact = false, forceView?: View) => isCamera(r)
-    ? <MotionStudy name={r.name} compact={compact} view={forceView ?? (compact ? supportsMotion(r.name) ? 'rig' : 'frame' : view)} playing={compact ? false : playing} progress={compact ? .35 : progress} />
-    : <ReferenceVisual reference={r} />;
+  async function loadSampleImage(file?: File) {
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 20 * 1024 * 1024) { notify('Choose a JPEG, PNG, or WebP smaller than 20 MB.'); return; }
+    const request = ++sampleLoadRef.current;
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image(); img.src = url; await img.decode();
+      if (request !== sampleLoadRef.current) { URL.revokeObjectURL(url); return; }
+      if (sampleImageRef.current) URL.revokeObjectURL(sampleImageRef.current);
+      sampleImageRef.current = url; setSampleImage(url); setProgress(1); setPlaying(false);
+      notify('Your image is ready. It stays in this browser and is not uploaded.');
+    } catch { URL.revokeObjectURL(url); notify('This image could not be opened. Try another JPEG, PNG, or WebP.'); }
+  }
+  function resetSampleImage() {
+    sampleLoadRef.current++;
+    setNotice('');
+    if (sampleImageRef.current) URL.revokeObjectURL(sampleImageRef.current);
+    sampleImageRef.current = undefined; setSampleImage(undefined);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+  const visual = (r: CameraReference, compact = false, forceView?: View) => getReferenceStudy(r.name)
+    ? <ReferenceVisual reference={r} progress={compact ? .88 : progress} compact={compact} imageUrl={!compact && supportsReferenceImage(r.name) ? sampleImage : undefined} view={compact || layout === 'compare' ? 'effect' : effectView} />
+    : <MotionStudy name={r.name} compact={compact} view={forceView ?? (compact ? supportsMotion(r.name) ? 'rig' : 'frame' : view)} playing={compact ? false : playing} progress={compact ? .35 : progress} />;
 
   return <div className={styles.app}>
     <header className={styles.header}>
@@ -198,10 +232,12 @@ export function CameraLibrary({ projectId, initialShot, cameraReferences, catego
         {layout === 'compare' ? <div className={styles.compareGrid}>
           {[0, 1].map(i => compared[i] ? <div className={styles.compareItem} key={compared[i].id}><div className={styles.compareTitle}><select aria-label={`Comparison reference ${i + 1}`} value={compared[i].id} onChange={e => setCompare(previous => previous.map((id, index) => index === i ? e.target.value : id))}>{cameraReferences.filter(r => r.id === compared[i].id || !compare.includes(r.id)).map(r => <option value={r.id} key={r.id}>{r.name}</option>)}</select><button onClick={() => setCompare(compare.filter(id => id !== compared[i].id))} aria-label={`Remove ${compared[i].name} from comparison`}><Icon name="close" size={16} /></button></div><div className={styles.compareVisual}>{visual(compared[i], false, 'frame')}</div><p>{compared[i].meaning}</p><span>{compared[i].function}</span></div> : <div className={styles.compareEmpty} key={i}><Icon name="compare" size={30} /><h3>Choose a second perspective</h3><p>Use the compare control on a reference below.</p><select aria-label="Add comparison reference" value="" onChange={e => setCompare([...compare, e.target.value])}><option value="" disabled>Select a reference</option>{cameraReferences.filter(r => !compare.includes(r.id)).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>)}
         </div> : <div className={styles.studyBody}>
-          <div className={styles.stage}>
-            <div className={styles.stageTools}><span>{current.id}<b> / </b>{isCamera(current) ? 'CAMERA LAB' : current.category.toUpperCase()}</span>{isCamera(current) && <div>{(['split', 'frame', 'rig'] as View[]).map(v => <button key={v} className={view === v ? styles.stageToolActive : ''} aria-pressed={view === v} onClick={() => setView(v)}>{v === 'split' ? 'Both views' : v === 'frame' ? 'Through lens' : 'Camera path'}</button>)}</div>}</div>
+          <div className={`${styles.stage} ${studyInfo ? styles.illustratedStage : ''}`}>
+            <div className={styles.stageTools}><span>{current.id}<b> / </b>{isCamera(current) ? 'CAMERA LAB' : studyInfo?.kind === 'effect' ? 'COLOR & OPTICS LAB' : current.category.toUpperCase()}</span>{isCamera(current) && !studyInfo && <div>{(['split', 'frame', 'rig'] as View[]).map(v => <button key={v} className={view === v ? styles.stageToolActive : ''} aria-pressed={view === v} onClick={() => setView(v)}>{v === 'split' ? 'Both views' : v === 'frame' ? 'Through lens' : 'Camera path'}</button>)}</div>}{studyInfo?.kind === 'effect' && <div>{(['split', 'original', 'effect'] as const).map(v => <button key={v} aria-label={`${v === 'split' ? 'Before and after' : v === 'original' ? 'Original' : 'Effect'} view`} className={effectView === v ? styles.stageToolActive : ''} aria-pressed={effectView === v} onClick={() => setEffectView(v)}>{v === 'split' ? 'Before / after' : v === 'original' ? 'Original' : 'Effect'}</button>)}</div>}</div>
+            {supportsReferenceImage(current.name) && <div className={styles.imageTools}><button onClick={() => fileInputRef.current?.click()}>{sampleImage ? 'Change image' : 'Use my photo'}</button><span>{sampleImage ? 'Your image · stays in this browser' : 'Original illustration · or try your own image'}</span>{sampleImage && <button onClick={resetSampleImage} aria-label="Reset reference image">Reset</button>}<input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" aria-label="Use your own reference image" onChange={e => { void loadSampleImage(e.target.files?.[0]); e.target.value = ''; }} hidden /></div>}
             <div className={styles.stageVisual} key={current.id}>{visual(current)}</div>
-            <div className={styles.stageCaption}>{isCamera(current) ? getMotionDescription(current.name) : 'Concept illustration · use the direction notes for the specific technique.'}</div>
+            <div className={styles.stageCaption}>{studyInfo?.description || getMotionDescription(current.name)}</div>
+            {studyInfo?.phaseLabels && <div className={styles.studyPhases}><span>01 <b>{studyInfo.phaseLabels[0]}</b></span><span aria-hidden="true">→</span><span>02 <b>{studyInfo.phaseLabels[1]}</b></span></div>}
           </div>
           <div className={styles.inspector}>
             <div className={styles.inspectorMeta}><span>{current.function}</span><button onClick={() => toggleFavorite(current.id)} aria-label={`${favorites.includes(current.id) ? 'Unsave' : 'Save'} ${current.name}`} aria-pressed={favorites.includes(current.id)} className={favorites.includes(current.id) ? styles.favorited : ''}><Icon name="star" size={20} /></button></div>
@@ -227,7 +263,7 @@ export function CameraLibrary({ projectId, initialShot, cameraReferences, catego
       {filtered.length === 0 ? <div className={styles.empty}><Icon name={savedOnly ? 'star' : 'search'} size={30} /><h3>{savedOnly && !favorites.length ? 'Keep your go-to references here.' : 'No references match these filters.'}</h3><p>{savedOnly && !favorites.length ? 'Save a reference with its star to build your own collection.' : 'Try a different word, category, or technique type.'}</p><button onClick={() => { changeCategory('All references'); }}>Browse all references</button></div> : <div className={layout === 'list' ? styles.list : styles.gallery}>
         {filtered.map(r => <article key={r.id} className={`${styles.card} ${r.id === current.id ? styles.selectedCard : ''}`}>
           <button className={styles.cardSelect} onClick={() => choose(r)} aria-label={`Explore ${r.name}`} aria-pressed={r.id === current.id}>
-            <div className={styles.cardVisual}>{visual(r, true)}<span className={styles.cardId}>{r.id.replace('VVS-', '')}</span>{isCamera(r) && supportsMotion(r.name) && <span className={styles.motionBadge}><Icon name="play" size={10} />MOTION</span>}</div>
+            <div className={styles.cardVisual}>{visual(r, true)}<span className={styles.cardId}>{r.id.replace('VVS-', '')}</span>{hasStudy(r) && <span className={styles.motionBadge}><Icon name="play" size={10} />{getReferenceStudy(r.name) ? 'STUDY' : 'MOTION'}</span>}</div>
             <div className={styles.cardText}><span>{r.function}</span><h3>{r.name}<span>↗</span></h3><p>{r.meaning}</p></div>
           </button>
           <div className={styles.cardFooter}><span>{r.priority}<i />{r.category === 'Camera Work' ? 'Camera work' : r.category === 'Visual Effects & Promptable FX' ? 'Visual effects' : r.category}</span><button onClick={() => toggleCompare(r.id)} aria-label={`${compare.includes(r.id) ? 'Remove' : 'Compare'} ${r.name}`} aria-pressed={compare.includes(r.id)} className={compare.includes(r.id) ? styles.favorited : ''}><Icon name={compare.includes(r.id) ? 'check' : 'compare'} size={15} /></button><button onClick={() => toggleFavorite(r.id)} aria-label={`${favorites.includes(r.id) ? 'Unsave' : 'Save'} ${r.name}`} aria-pressed={favorites.includes(r.id)} className={favorites.includes(r.id) ? styles.favorited : ''}><Icon name="star" size={16} /></button></div>

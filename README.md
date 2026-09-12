@@ -114,6 +114,13 @@ is 50MB — raise it under **Storage → Settings** if you need larger clips.
   shows original procedural camera/framing studies, with camera path and lens
   views, play/pause, scrubbing, speed controls, and synchronized two-shot
   comparisons. Copy a direction or customize its placeholders in a shot brief.
+  Every non-camera entry now has a technique-specific, scrubbable study:
+  lighting sources and shadows, composition guides, edit transitions,
+  narrative beats, color/optical effects, and illustrative style excerpts.
+  Fifteen camera entries also use human framing, focus, and action studies.
+  Grading, desaturation, sepia, and grain support before/after views and a
+  local JPEG/PNG/WebP reference image; the image is not uploaded or saved.
+  Selecting a study starts playback unless reduced motion is requested.
   Diagrams are illustrative, not source footage or generation results; source
   attribution and original review states are retained. No model calls or new
   dependencies are required.
@@ -126,6 +133,8 @@ is 50MB — raise it under **Storage → Settings** if you need larger clips.
   Set `CAMERA_QA_PASSWORD` for the additional section-password check.
   It uses an already installed Playwright/Chrome runtime; `PLAYWRIGHT_MODULE`,
   `CHROME_PATH`, and `CAMERA_QA_URL` can override local paths and the test URL.
+  `node scripts/check-visual-studies.cjs` exercises all 109 non-camera studies,
+  sample camera studies, mobile layout, and actual desaturation pixel values.
 
   Camera References has an additional server-verified password gate. Successful
   entry grants an eight-hour, signed, user-bound HttpOnly cookie; **Lock section**
