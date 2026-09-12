@@ -123,8 +123,18 @@ is 50MB — raise it under **Storage → Settings** if you need larger clips.
   `node scripts/import-camera-references.mjs <path-to-catalog.json> [--check]`.
   With the app running locally, `node scripts/check-camera-references.cjs`
   checks the existing login and library interactions without writing scenes.
+  Set `CAMERA_QA_PASSWORD` for the additional section-password check.
   It uses an already installed Playwright/Chrome runtime; `PLAYWRIGHT_MODULE`,
   `CHROME_PATH`, and `CAMERA_QA_URL` can override local paths and the test URL.
+
+  Camera References has an additional server-verified password gate. Successful
+  entry grants an eight-hour, signed, user-bound HttpOnly cookie; **Lock section**
+  clears it. The catalog is delivered only after both access checks, rather
+  than included in a publicly readable JavaScript bundle. The configured
+  fallback password is stored only as a salted scrypt hash. Set the optional
+  server-only `CAMERA_REFERENCES_PASSWORD` to replace it. Cookies use
+  `CAMERA_REFERENCES_SESSION_SECRET`, falling back to the existing server-only
+  Supabase service key, so the existing deployment needs no additional setup.
 
 - **Auth** — email/password login; unauthenticated users are redirected to
   `/login` by middleware; session persists across refreshes; sign-out in the

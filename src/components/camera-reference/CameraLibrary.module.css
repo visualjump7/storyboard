@@ -3,6 +3,7 @@
 .app button,.app a,.app input,.app select,.app textarea{-webkit-tap-highlight-color:transparent}
 .app button{cursor:pointer}
 .app button:disabled{cursor:default;opacity:.3}
+.lockButton{padding:6px 9px;background:none;color:#aab79b;border:1px solid #3d4934;border-radius:4px;font-size:11px!important;white-space:nowrap}.lockButton:hover{background:#26301f}
 .search:focus-within{outline:2px solid var(--cr-orange);outline-offset:3px}.dialogNotice{margin:14px 0 0;color:#ffb18d;font-size:12px}
 .app button:focus-visible,.app a:focus-visible,.app input:focus-visible,.app select:focus-visible,.app textarea:focus-visible{outline:2px solid var(--cr-orange);outline-offset:4px}
 .app button,.app a{transition:background .15s,color .15s,border-color .15s}

@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { cameraReferences, categories, categoryCounts, type CameraReference } from '@/lib/camera-reference/catalog';
+import type { CameraReference, CameraCategory } from '@/lib/camera-reference/catalog';
+import { lockCameraReferences } from '@/app/camera-references/access-actions';
 import { MotionStudy, supportsMotion, getMotionDescription } from './MotionStudy';
 import { ReferenceVisual } from './ReferenceVisual';
 import styles from './CameraLibrary.module.css';
@@ -39,7 +40,11 @@ type View = 'split' | 'frame' | 'rig';
 
 function isCamera(r: CameraReference) { return r.category === 'Camera Work'; }
 
-export function CameraLibrary({ projectId, initialShot }: { projectId?: string; initialShot?: string }) {
+export function CameraLibrary({ projectId, initialShot, cameraReferences, categories }: {
+  projectId?: string; initialShot?: string;
+  cameraReferences: readonly CameraReference[]; categories: readonly CameraCategory[];
+}) {
+  const categoryCounts = useMemo(() => Object.fromEntries(categories.map(category => [category, cameraReferences.filter(r => r.category === category).length])), [categories, cameraReferences]);
   const initial = cameraReferences.find(r => r.id === initialShot || r.slug === initialShot) ?? cameraReferences.find(r => r.name === 'Dolly Shot')!;
   const [category, setCategory] = useState<string>(initial.category);
   const [selected, setSelected] = useState(initial.id);
@@ -83,7 +88,7 @@ export function CameraLibrary({ projectId, initialShot }: { projectId?: string; 
     };
     window.addEventListener('keydown', keys);
     return () => { window.removeEventListener('keydown', keys); clearTimeout(noticeTimer.current); };
-  }, []);
+  }, [cameraReferences]);
 
   useEffect(() => {
     if (!storageReady) return;
@@ -117,8 +122,8 @@ export function CameraLibrary({ projectId, initialShot }: { projectId?: string; 
     (!savedOnly || favorites.includes(r.id)) &&
     (kind === 'All techniques' || (kind === 'Animated studies' ? supportsMotion(r.name) && isCamera(r) : kind === 'Core palette' ? r.priority === 'Core' : r.function === kind)) &&
     (!query.trim() || `${r.name} ${r.id} ${r.meaning} ${r.application} ${r.direction} ${r.function} ${r.category}`.toLowerCase().includes(query.toLowerCase().trim()))
-  ), [category, savedOnly, favorites, kind, query]);
-  const functions = useMemo(() => Array.from(new Set(cameraReferences.filter(r => category === 'All references' || r.category === category).map(r => r.function))), [category]);
+  ), [cameraReferences, category, savedOnly, favorites, kind, query]);
+  const functions = useMemo(() => Array.from(new Set(cameraReferences.filter(r => category === 'All references' || r.category === category).map(r => r.function))), [cameraReferences, category]);
   const compared = compare.map(id => cameraReferences.find(r => r.id === id)!).filter(Boolean);
   const moving = layout === 'compare' ? compared.some(r => isCamera(r) && supportsMotion(r.name)) : isCamera(current) && supportsMotion(current.name);
   const tokens = Array.from(new Set([...current.direction.matchAll(/\[([^\]]+)\]/g)].map(m => m[1])));
@@ -163,6 +168,7 @@ export function CameraLibrary({ projectId, initialShot }: { projectId?: string; 
       <span className={styles.headerDivider} />
       <span className={styles.breadcrumb}>Production library <span>/</span> <strong>Camera references</strong></span>
       <Link className={styles.backLink} href={projectId ? `/p/${projectId}` : '/'}><Icon name="arrow" size={15} /><span>{projectId ? 'Back to storyboard' : 'All projects'}</span></Link>
+      <form action={lockCameraReferences}><button className={styles.lockButton} type="submit">Lock section</button></form>
     </header>
 
     <aside className={styles.sidebar}>

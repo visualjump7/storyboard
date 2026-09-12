@@ -1,3 +1,4 @@
+import 'server-only';
 import { catalogSourceSha256, sourceCatalog } from './catalog-data';
 
 export const categories = [
