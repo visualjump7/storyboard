@@ -4,6 +4,15 @@
  */
 export type ProjectKind = 'storyboard' | 'social' | 'merchandise' | 'game' | 'music';
 
+/** Display label for each kind — one copy, shared by every card and header. */
+export const KIND_LABELS: Record<ProjectKind, string> = {
+  storyboard: 'Storyboard',
+  social: 'Social',
+  merchandise: 'Merchandise',
+  game: 'Games',
+  music: 'Music',
+};
+
 /**
  * Kinds that share the showcase surface: an item with media, a summary, a
  * link out, and a stage.
@@ -104,13 +113,35 @@ export const MERCH_STATUS_LABELS: Record<MerchStatus, string> = {
 
 export type MediaKind = 'image' | 'video' | 'audio';
 
-/** A project — one storyboard or one social pipeline (Postgres `projects` table). */
-export interface Project {
+/**
+ * A workspace — the top level. One per world or client (Phantom Ranch,
+ * Roaring Pines); it holds projects and nothing else. Postgres `workspaces`.
+ */
+export interface Workspace {
   id: string;
   user_id: string;
   name: string;
   description: string;
+  /** Position on the workspace index. */
+  order_index: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A project — one board of any kind, filed under a workspace (Postgres `projects`). */
+export interface Project {
+  id: string;
+  user_id: string;
+  /**
+   * The workspace this project is filed under. Nullable only until migration
+   * 0009 tightens the column; treat null as "unfiled" and never assume it.
+   */
+  workspace_id: string | null;
+  name: string;
+  description: string;
   kind: ProjectKind;
+  /** Position within its workspace. */
+  order_index: number;
   /** Unguessable token backing the public read-only /share/{token} page. */
   share_token: string;
   created_at: string;

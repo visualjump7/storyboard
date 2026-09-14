@@ -1,6 +1,6 @@
 ---
 name: storyboard
-description: Push projects, scenes, social posts, merchandise items, prompts, media, and schedules into the cloud storyboard/pipeline app (the Supabase-backed Next.js board in this repo). Use whenever the user wants to add, update, reorder, or remove a storyboard scene, a social post, OR a merchandise item, create/switch/rename/delete a project (storyboard, social pipeline, or merchandise board), set a generation prompt or post copy, attach or replace scene images or post media (images/video), set a posting schedule/status/platforms, research and fill in a product's supplier/cost/sale price/development time, get the read-only share link, animate a storyboard scene's still into a video clip (local MiniMax H3 image-to-video via ComfyUI), or read back the current board — e.g. "add this to the storyboard", "new project for the tornado film", "add this to the social pipeline", "schedule that post for Friday", "mark post 2 ready", "find me a manufacturer for this plushie and fill in the costs", "what would we sell this for", "what's in the pipeline", "give me the share link", "animate scene 2". Also use after generating or downloading an image/video the user wants saved as a scene, post, or product shot.
+description: Push workspaces, projects, scenes, social posts, merchandise items, games, music tracks, prompts, media, and schedules into the cloud storyboard/pipeline app (the Supabase-backed Next.js board in this repo). Use whenever the user wants to add, update, reorder, or remove a storyboard scene, a social post, a merchandise item, a game, or a track; create/switch/rename/delete a workspace or move a project between workspaces ("put this in Roaring Pines", "new workspace", "move Merchandise into Phantom Ranch", "which workspace is that in", "what's in Phantom Ranch"); create/switch/rename/delete a project (storyboard, social pipeline, merchandise board, game, or music); set a generation prompt or post copy; attach or replace scene images or post media (images/video/audio); set a posting schedule/status/platforms; research and fill in a product's supplier/cost/sale price/development time; get the read-only share link; animate a storyboard scene's still into a video clip (local MiniMax H3 image-to-video via ComfyUI); or read back the current board — e.g. "add this to the storyboard", "new project for the tornado film", "add this to the social pipeline", "schedule that post for Friday", "mark post 2 ready", "find me a manufacturer for this plushie and fill in the costs", "what would we sell this for", "what's in the pipeline", "give me the share link", "animate scene 2". Also use after generating or downloading an image/video the user wants saved as a scene, post, or product shot.
 ---
 
 # Storyboard + Social Pipeline
@@ -10,8 +10,16 @@ directly to the same Supabase backend the deployed web app reads from, so anythi
 add appears in the browser instantly. Never tell the user to use the browser to do
 something this CLI can do.
 
+Content has exactly two levels: **workspaces** hold **projects**, and projects
+hold scenes/posts/products/games/tracks. A workspace is a folder with a name, not
+a board — "Phantom Ranch" is one (it holds the five original projects); "Roaring
+Pines" will be another. Nothing about a project changes when it moves between
+workspaces: its `/p/{id}` URL, share link, and media all stay put.
+
 Projects come in five kinds:
-- **storyboard** — film boards: scenes with a prompt and one image.
+- **storyboard** — film boards: scenes with a prompt and one hero image, plus
+  optional media clips alongside it (rendered by `animate` or attached with
+  `--media`).
 - **social** — post pipelines: posts with copy, multiple media (images/video),
   a schedule, a status (idea/draft/ready/scheduled/posted), and platforms.
   Nothing publishes from here; it's the planning/review surface.
@@ -84,16 +92,29 @@ Rules for this work:
   quotes (q1, q2…) and orders (o1, o2…) — the numbers are what `quote 1 set 2`
   and `order 1 rm 1` refer to.
 
-## Projects come first
+## Workspaces first, then projects
 
-Scene/post commands act on the **current project** (remembered in the gitignored
-`.sb-state.json`). Before adding/editing, make sure you're on the right project:
+The CLI remembers a **current workspace** and a **current project** (in the
+gitignored `.sb-state.json`). Project commands act within the current workspace;
+scene/post commands act on the current project. Before adding/editing, make sure
+you're in the right place — **pick the workspace first**: Roaring Pines content
+never goes into Phantom Ranch, and vice versa.
 
-- If the user names a project, `npm run sb -- project use "<name>"` first (or pass
-  `--project "<name>"` on the command).
-- If you're unsure which project, run `npm run sb -- projects` and ask — don't guess.
-  Social content belongs in a `[social]` project; film scenes in a storyboard one.
-- Commands print `Using project: X` to stderr; glance at it to confirm the target.
+- If the user names a workspace, `npm run sb -- workspace use "<name>"` first (or
+  pass `--workspace "<name>"` on the command).
+- If the user names a project, `npm run sb -- project use "<name>"` — that sets
+  both the workspace and the project (or pass `--project "<name>"`).
+- If you're unsure, run `npm run sb -- workspaces` and `npm run sb -- projects`
+  and ask — don't guess. `projects --all` shows every workspace grouped, with
+  "Workspace / Project" names.
+- If the same project name exists in two workspaces, use a qualified ref
+  (`"Phantom Ranch/Merchandise"`) or ask — never guess. The CLI errors on an
+  ambiguous name and lists the qualified options; a name prefix never silently
+  resolves into another workspace.
+- Social content belongs in a `[social]` project; film scenes in a storyboard one;
+  products, games, and tracks in their own kinds.
+- Commands print `Using project: <Workspace> / <Project>` to stderr; glance at it
+  to confirm the target.
 
 ## How to use it
 
@@ -103,16 +124,35 @@ Always invoke through npm so args pass correctly (the `--` is required):
 npm run sb -- <command> [args]
 ```
 
-Project commands:
+Workspace commands (`ws` is an alias for `workspace`):
 
 | Goal | Command |
 |------|---------|
-| List projects (● = current, `[social]` tag) | `npm run sb -- projects` |
+| List workspaces (● = current, with project counts) | `npm run sb -- workspaces` (or `ws ls`) |
+| Create a workspace + switch to it (clears the current project) | `npm run sb -- workspace add "Roaring Pines"` |
+| Switch the current workspace | `npm run sb -- workspace use "Phantom Ranch"` |
+| Rename a workspace | `npm run sb -- workspace rename 2 "New name"` |
+| Delete an EMPTY workspace | `npm run sb -- workspace rm 2` (refused while it holds projects) |
+| Move a project to another workspace | `npm run sb -- project move Merchandise "Roaring Pines"` (alias `mv`) |
+
+Project commands (act within the current workspace):
+
+| Goal | Command |
+|------|---------|
+| List this workspace's projects (● = current, `[kind]` tag, numbered 1..n) | `npm run sb -- projects` |
+| List every workspace's projects, grouped | `npm run sb -- projects --all` |
 | Create a storyboard + switch to it | `npm run sb -- project add "Tornado Film"` |
 | Create a social pipeline + switch to it | `npm run sb -- project add "Q3 Social" --social` |
-| Switch the current project | `npm run sb -- project use "Q3 Social"` |
+| Create another kind | `npm run sb -- project add "Merch" --merch` · `--kind game` · `--kind music` |
+| Create inside a different workspace | add `--workspace "Roaring Pines"` to `project add` |
+| Switch the current project (sets the workspace too) | `npm run sb -- project use "Q3 Social"` |
 | Rename a project | `npm run sb -- project rename 2 "New name"` |
 | Delete a project (+ its scenes/media) | `npm run sb -- project rm 3` |
+
+`project add` needs a workspace: the current one, `--workspace`, or the only one
+if exactly one exists — otherwise it refuses and lists them. `project move`
+appends the project to the end of the target workspace and never changes its
+share link; if it was the current project it stays current.
 
 Board/pipeline commands (act on the current project):
 
@@ -123,6 +163,7 @@ Board/pipeline commands (act on the current project):
 | Read the script (storyboard) / notes (social) | `npm run sb -- script get` |
 | Replace the script/notes | `npm run sb -- script set ./notes.md` |
 | Act on a different project once | add `--project "<name>"` to any command |
+| Act in a different workspace once | add `--workspace "<name>"` to any command that takes a project |
 
 Storyboard scenes:
 
@@ -130,7 +171,8 @@ Storyboard scenes:
 |------|---------|
 | Add a scene | `npm run sb -- add --name "Opening" --prompt "wide drone shot" --image ./shot.png` |
 | Update prompt/name/desc | `npm run sb -- set 2 --prompt "tighter framing"` |
-| Attach/replace the image | `npm run sb -- image 2 ./new.png` (path **or** http(s) URL) |
+| Attach/replace the hero image | `npm run sb -- image 2 ./new.png` (path **or** http(s) URL) |
+| Attach clips/extra frames alongside it | `npm run sb -- media 2 add ./clip.mp4` |
 | Animate the still into a clip | `npm run sb -- animate 2 --duration 8` (see below) |
 | Delete a scene | `npm run sb -- rm 3` |
 
@@ -146,8 +188,14 @@ Social posts:
 | Remove / reorder media | `npm run sb -- media 2 rm 1` · `npm run sb -- media 2 order 3,1,2` |
 | Delete a post | `npm run sb -- rm 3` |
 
-`<project>` is an index from `projects`, a name, a UUID, or an id prefix.
-`<scene>`/`<post>` is a 1-based index from `list`, a full UUID, or an id prefix.
+Refs:
+- `<workspace>` is a 1-based index from `workspaces`, an exact name
+  (case-insensitive), a full UUID, or a unique id prefix.
+- `<project>` is a 1-based index from `projects`, an exact name, or a unique name
+  prefix — resolved **within the current (or `--workspace`) workspace only**. A
+  full UUID or unique id prefix is global, and so is a qualified
+  `"Workspace/Project"` ref (either side may be a name or an index).
+- `<scene>`/`<post>` is a 1-based index from `list`, a full UUID, or an id prefix.
 
 ## Animating scenes (image → video)
 
@@ -184,16 +232,20 @@ just generated (e.g. via an image/video-gen MCP) saved:
 1. If you have a URL for it, pass the URL directly.
 2. Otherwise download/save it locally first, then pass the path.
 
-Notes: `--media` repeats for multiple items and only works on social projects
-(`--image` only on storyboards — the CLI errors helpfully if mixed up). Prefer
-**.mp4 (H.264)** for video; `.mov` often won't play in Chrome. Supabase's default
-per-file cap is ~50MB. `--schedule` is local time (`YYYY-MM-DD` or
-`YYYY-MM-DD HH:MM`); statuses are idea/draft/ready/scheduled/posted; platform
-aliases normalize (twitter→x, ig→instagram, yt→youtube, fb→facebook).
+Notes: `--media` repeats for multiple items and works on **every kind** of
+project. `--image` is storyboard-only — it sets the scene's single hero still,
+and a storyboard scene can carry `--media` clips and extra frames alongside it
+(the CLI errors helpfully if `--image` is used on another kind, or a video is
+passed to `--image`). Prefer **.mp4 (H.264)** for video; `.mov` often won't play
+in Chrome. Supabase's default per-file cap is ~50MB. `--schedule` is local time
+(`YYYY-MM-DD` or `YYYY-MM-DD HH:MM`); social statuses are
+idea/draft/ready/scheduled/posted; platform aliases normalize (twitter→x,
+ig→instagram, yt→youtube, fb→facebook).
 
 ## Recommended flow
 
-1. Run `npm run sb -- list` first to see the board/pipeline and pick correct indexes.
+1. Run `npm run sb -- list` first to see the board/pipeline and pick correct indexes
+   (check the `Using project: <Workspace> / <Project>` line).
 2. Make the change (`add` / `set` / `image` / `media` / `rm`).
 3. Confirm what changed in plain language (e.g. "Added the teaser post with 2 images,
    scheduled Aug 20 at 9:30am for Instagram + LinkedIn").
@@ -208,7 +260,13 @@ user to `.env.local.example` and have them fill in `SUPABASE_SERVICE_ROLE_KEY`
 
 ## If the CLI suggests a migration
 
-Errors about missing columns/tables (`kind`, `share_token`, `scene_media`, …) mean the
-database predates the social pipeline. Have the user run
-`supabase/migrations/0002_social_pipeline.sql` in the Supabase SQL editor (backup
-first) — it's additive and idempotent.
+Errors about missing columns/tables mean the database is behind the code. Have the
+user run the numbered migrations in `supabase/migrations/` **in order** in the
+Supabase SQL editor (backup first) — each is additive and idempotent:
+`0001_multi_project.sql`, `0002_social_pipeline.sql` (`kind`, `share_token`,
+`scene_media`), `0003_merchandise.sql`, `0004_realtime_deletes.sql`,
+`0005_merch_quotes_orders.sql`, `0006_games_music.sql`, `0007_workspaces.sql`
+(`workspaces`, `projects.workspace_id`), `0008_realtime_publication.sql` (live
+updates), `0009_workspace_required.sql` (`workspace_id` NOT NULL — only after
+the app and CLI that send it are live). Errors naming `workspaces` or
+`workspace_id` mean 0007 hasn't run; `kind`/`share_token`/`scene_media` mean 0002.

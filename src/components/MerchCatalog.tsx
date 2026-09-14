@@ -33,6 +33,7 @@ import type {
   Project,
   Scene,
   SceneMedia,
+  Workspace,
 } from '@/lib/types';
 import { MerchRow } from './MerchRow';
 import { PipelineToolbar } from './PipelineToolbar';
@@ -42,6 +43,12 @@ import { ScriptPanel } from './ScriptPanel';
 type MerchCatalogProps = {
   userId: string;
   project: Project;
+  /** The workspace this board is filed under; null for an unfiled project. */
+  workspace: Workspace | null;
+  /** Projects in the same workspace, for the switcher — fetched on the server. */
+  siblings: Project[];
+  /** Every workspace, for the switcher's "Switch workspace" section. */
+  workspaces: Workspace[];
 };
 
 /**
@@ -50,7 +57,13 @@ type MerchCatalogProps = {
  * Products themselves are `scenes` rows with pictures in `scene_media`, so
  * uploads, the deletion sweep and share links reuse existing machinery.
  */
-export function MerchCatalog({ userId, project }: MerchCatalogProps) {
+export function MerchCatalog({
+  userId,
+  project,
+  workspace,
+  siblings,
+  workspaces,
+}: MerchCatalogProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
@@ -58,7 +71,7 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
   const [mediaMap, setMediaMap] = useState<Record<string, SceneMedia[]>>({});
   const [quoteMap, setQuoteMap] = useState<Record<string, MerchQuote[]>>({});
   const [orderMap, setOrderMap] = useState<Record<string, MerchOrder[]>>({});
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>(siblings);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -98,7 +111,7 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
   // Load the project list for the switcher dropdown.
   useEffect(() => {
     let active = true;
-    fetchProjects(supabase)
+    fetchProjects(supabase, { workspaceId: project.workspace_id })
       .then((p) => {
         if (active) setProjects(p);
       })
@@ -108,7 +121,7 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
     return () => {
       active = false;
     };
-  }, [supabase]);
+  }, [supabase, project.workspace_id]);
 
   // Live updates, so research written from the CLI lands without a reload.
   useEffect(() => {
@@ -373,6 +386,8 @@ export function MerchCatalog({ userId, project }: MerchCatalogProps) {
         userId={userId}
         project={project}
         projects={projects}
+        workspace={workspace}
+        workspaces={workspaces}
         postCount={list.length}
         cardSize={0}
         minSize={0}

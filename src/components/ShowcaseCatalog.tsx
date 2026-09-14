@@ -26,6 +26,7 @@ import {
   type SceneMedia,
   type ShowcaseFields,
   type ShowcaseKind,
+  type Workspace,
 } from '@/lib/types';
 import { PipelineToolbar } from './PipelineToolbar';
 import { ScriptPanel } from './ScriptPanel';
@@ -40,6 +41,12 @@ type ShowcaseCatalogProps = {
   kind: ShowcaseKind;
   userId: string;
   project: Project;
+  /** The workspace this board is filed under; null for an unfiled project. */
+  workspace: Workspace | null;
+  /** Projects in the same workspace, for the switcher — fetched on the server. */
+  siblings: Project[];
+  /** Every workspace, for the switcher's "Switch workspace" section. */
+  workspaces: Workspace[];
 };
 
 /**
@@ -48,14 +55,21 @@ type ShowcaseCatalogProps = {
  * stage. Items are `scenes` rows with their media in `scene_media`, so uploads,
  * the deletion sweep, share links and realtime all reuse existing machinery.
  */
-export function ShowcaseCatalog({ kind, userId, project }: ShowcaseCatalogProps) {
+export function ShowcaseCatalog({
+  kind,
+  userId,
+  project,
+  workspace,
+  siblings,
+  workspaces,
+}: ShowcaseCatalogProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const meta = SHOWCASE_META[kind];
 
   const [items, setItems] = useState<Scene[] | null>(null); // null = loading
   const [mediaMap, setMediaMap] = useState<Record<string, SceneMedia[]>>({});
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>(siblings);
   const [error, setError] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -86,7 +100,7 @@ export function ShowcaseCatalog({ kind, userId, project }: ShowcaseCatalogProps)
 
   useEffect(() => {
     let active = true;
-    fetchProjects(supabase)
+    fetchProjects(supabase, { workspaceId: project.workspace_id })
       .then((p) => {
         if (active) setProjects(p);
       })
@@ -96,7 +110,7 @@ export function ShowcaseCatalog({ kind, userId, project }: ShowcaseCatalogProps)
     return () => {
       active = false;
     };
-  }, [supabase]);
+  }, [supabase, project.workspace_id]);
 
   // Live updates, so items written from the CLI land without a reload.
   useEffect(() => {
@@ -282,6 +296,8 @@ export function ShowcaseCatalog({ kind, userId, project }: ShowcaseCatalogProps)
         userId={userId}
         project={project}
         projects={projects}
+        workspace={workspace}
+        workspaces={workspaces}
         postCount={list.length}
         cardSize={cardSize}
         minSize={220}

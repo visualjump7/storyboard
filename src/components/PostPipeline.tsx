@@ -15,7 +15,7 @@ import {
 } from '@/lib/media';
 import { fetchProjects } from '@/lib/projects';
 import { splitPipeline } from '@/lib/pipeline';
-import type { PostFields, Project, Scene, SceneMedia } from '@/lib/types';
+import type { PostFields, Project, Scene, SceneMedia, Workspace } from '@/lib/types';
 import { PipelineBoard } from './PipelineBoard';
 import { PipelineToolbar } from './PipelineToolbar';
 import { PostDetail } from './PostDetail';
@@ -28,15 +28,27 @@ const DEFAULT_SIZE = 268;
 type PostPipelineProps = {
   userId: string;
   project: Project;
+  /** The workspace this pipeline is filed under; null for an unfiled project. */
+  workspace: Workspace | null;
+  /** Projects in the same workspace, for the switcher — fetched on the server. */
+  siblings: Project[];
+  /** Every workspace, for the switcher's "Switch workspace" section. */
+  workspaces: Workspace[];
 };
 
-export function PostPipeline({ userId, project }: PostPipelineProps) {
+export function PostPipeline({
+  userId,
+  project,
+  workspace,
+  siblings,
+  workspaces,
+}: PostPipelineProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
   const [posts, setPosts] = useState<Scene[] | null>(null); // null = loading
   const [mediaMap, setMediaMap] = useState<Record<string, SceneMedia[]> | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>(siblings);
   const [error, setError] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -70,7 +82,7 @@ export function PostPipeline({ userId, project }: PostPipelineProps) {
   // Load the project list for the switcher dropdown.
   useEffect(() => {
     let active = true;
-    fetchProjects(supabase)
+    fetchProjects(supabase, { workspaceId: project.workspace_id })
       .then((p) => {
         if (active) setProjects(p);
       })
@@ -80,7 +92,7 @@ export function PostPipeline({ userId, project }: PostPipelineProps) {
     return () => {
       active = false;
     };
-  }, [supabase]);
+  }, [supabase, project.workspace_id]);
 
   const list = useMemo(() => posts ?? [], [posts]);
   const { backlog, groups } = useMemo(() => splitPipeline(list), [list]);
@@ -257,6 +269,8 @@ export function PostPipeline({ userId, project }: PostPipelineProps) {
         userId={userId}
         project={project}
         projects={projects}
+        workspace={workspace}
+        workspaces={workspaces}
         postCount={list.length}
         cardSize={cardSize}
         minSize={MIN_SIZE}

@@ -2,25 +2,39 @@
 // sb — Storyboard agent CLI.
 //
 // A non-browser client into the same Supabase backend the web app uses, so
-// Claude (or you) can push projects, scenes, social posts, prompts, and media
-// into the app from any machine that has this repo + a .env.local.
+// Claude (or you) can push workspaces, projects, scenes, social posts, prompts,
+// and media into the app from any machine that has this repo + a .env.local.
 //
-// Projects come in three kinds: 'storyboard' (film scene boards — the
-// original), 'social' (post pipelines: copy + multiple images/videos +
-// schedule + status + platforms), and 'merchandise' (product tracking:
-// images + supplier + cost/price + dev time + stage). Kind-specific flags
-// error on the wrong kind rather than writing a column that board never
-// shows.
+// Workspaces hold projects; projects hold scenes. Exactly one level — a
+// workspace is NOT a project kind. Projects come in five kinds: 'storyboard'
+// (film scene boards — the original), 'social' (post pipelines: copy +
+// multiple images/videos + schedule + status + platforms), 'merchandise'
+// (product tracking: images + supplier quotes/orders + price + dev time +
+// stage), 'game' and 'music' (showcase boards: media + summary + link +
+// stage). Kind-specific flags error on the wrong kind rather than writing a
+// column that board never shows.
 //
 // Usage:
 //   npm run sb -- <command> [args]      (note the `--` before args)
 //   node scripts/sb.mjs <command> [args]
 //
-// Project commands:
-//   projects                              List your projects (● = current)
-//   project add <name…> [--social|--merch]  Create a project and make it current
-//   project use <project>                 Set the current project
+// Workspace commands:
+//   workspaces                            List workspaces (● = current) + project counts
+//   workspace add <name…>                 Create a workspace and make it current
+//   workspace use <workspace>             Set the current workspace
+//   workspace rename <workspace> <name…>  Rename a workspace
+//   workspace rm <workspace>              Delete an EMPTY workspace (refused while it
+//                                         still holds projects — move/delete them first)
+//   ('ws' is an alias for 'workspace'; 'ws ls' lists them too)
+//
+// Project commands (act within the current workspace; override with --workspace):
+//   projects [--all]                      List the current workspace's projects (● = current);
+//                                         --all lists every workspace, grouped
+//   project add <name…> [--kind K|--social|--merch] [--workspace W]
+//                                         Create a project inside the workspace + make it current
+//   project use <project>                 Set the current project (and its workspace)
 //   project rename <project> <name…>      Rename a project
+//   project move <project> <workspace>    File a project under another workspace (alias: mv)
 //   project rm <project>                  Delete a project (and all its scenes/media)
 //
 // Scene/post commands (act on the current project; override with --project):
@@ -28,10 +42,10 @@
 //   add [--name N] [--desc D] [--prompt P] [--image PATH|URL]
 //       [--copy TEXT] [--media PATH|URL]… [--schedule "YYYY-MM-DD[ HH:MM]"]
 //       [--platforms a,b,c] [--status S]
-//       [--supplier URL] [--cost N] [--price N] [--dev-time TEXT]
+//       [--price N] [--dev-time TEXT] [--link URL]
 //   set <scene> [--name N] [--desc D] [--prompt P] [--copy TEXT]
 //       [--schedule …|none] [--platforms …|none] [--status S]
-//       [--supplier URL] [--cost N|none] [--price N|none] [--dev-time TEXT]
+//       [--price N|none] [--dev-time TEXT] [--link URL]
 //   image <scene> <PATH|URL>              Upload/replace a storyboard scene's image
 //   media <post> [list]                   List a post's media
 //   media <post> add <PATH|URL>…          Append media (images/videos) to a post
@@ -41,15 +55,28 @@
 //   rm <scene>                            Delete a scene/post and its stored media
 //   script get                            Print the script/notes text
 //   script set <PATH|->                   Replace the script/notes text (- reads stdin)
+//   quote <product> [list|add|set <n>|rm <n>]           (merchandise suppliers/quotes)
+//       [--supplier N] [--contact C] [--url U] [--cost N|none] [--moq N|none]
+//       [--lead-time T] [--notes T]
+//   order <product> [list|add|set <n>|rm <n>]           (merchandise orders)
+//       [--supplier N] [--qty N] [--cost N] [--ordered YYYY-MM-DD] [--due YYYY-MM-DD]
+//       [--status S] [--notes T]
 //   animate <scene> [--prompt P] [--duration S] [--mp N] [--turbo] [--seed N]
+//                   [--steps N] [--timeout MIN]
 //                                         Render the scene's still into a video clip
 //                                         (image-to-video on local ComfyUI / MiniMax
 //                                         H3) and attach it to the scene as media
 //   help                                  Show this help
 //
-// <project> = 1-based index from `projects`, a name, a full UUID, or an id prefix.
+// <workspace> = 1-based index from `workspaces`, exact name (case-insensitive), full UUID,
+//   or a unique id prefix.
+// <project> = 1-based index from `projects`, exact name, or unique name prefix — all
+//   resolved WITHIN the current (or --workspace) workspace only; a full UUID or unique id
+//   prefix is global; "Workspace/Project" (either side a name or index) is global too.
 // <scene>/<post> = 1-based index from `list`, a full UUID, or an id prefix.
-// --project <project> scopes any scene command to a specific project for one run.
+// --kind is one of storyboard (default), social, merchandise, game, music.
+// --workspace <workspace> scopes one run to a workspace without changing the current one;
+//   --project <project> does the same for a scene command.
 // --image/--media accept a local file path OR an http(s) URL (downloaded then uploaded).
 
 import { readFile, writeFile } from 'node:fs/promises';
@@ -57,7 +84,10 @@ import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const BUCKET = 'scene-images';
-const STATE_FILE = '.sb-state.json'; // remembers the current project (gitignored)
+// Remembers the current workspace + project (gitignored):
+//   { workspaceId?: string, projectId?: string }
+// An older file holding only projectId is upgraded in place on first use.
+const STATE_FILE = '.sb-state.json';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -141,7 +171,7 @@ async function ownerId() {
 }
 
 // ---------------------------------------------------------------------------
-// Local state (current project)
+// Local state (current workspace + project)
 // ---------------------------------------------------------------------------
 
 async function readState() {
@@ -156,10 +186,32 @@ async function writeState(state) {
   await writeFile(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`);
 }
 
-async function setCurrentProject(id) {
+/** Make a project current — and its workspace with it, so the two never disagree. */
+async function setCurrentProject(project) {
   const state = await readState();
-  state.projectId = id;
+  state.projectId = project.id;
+  if (project.workspace_id) state.workspaceId = project.workspace_id;
+  else delete state.workspaceId; // unfiled project (or a pre-workspace database)
   await writeState(state);
+}
+
+/** Make a workspace current; drop the current project unless it lives there. */
+async function setCurrentWorkspace(workspace, projects) {
+  const state = await readState();
+  state.workspaceId = workspace.id;
+  if (state.projectId) {
+    const p = (projects ?? []).find((x) => x.id === state.projectId);
+    if (!p || p.workspace_id !== workspace.id) delete state.projectId;
+  }
+  await writeState(state);
+}
+
+async function clearCurrentWorkspaceIf(id) {
+  const state = await readState();
+  if (state.workspaceId === id) {
+    delete state.workspaceId;
+    await writeState(state);
+  }
 }
 
 async function clearCurrentProjectIf(id) {
@@ -204,69 +256,454 @@ function parseArgs(argv, repeatable = new Set()) {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// --- projects ---
+// --- workspaces + projects ---
 
-async function fetchProjects() {
+// Feature detection: a database that predates 0007_workspaces.sql has no
+// workspaces table and no projects.workspace_id / order_index. Project reads
+// fall back to the original flat, creation-ordered behaviour there; anything
+// workspace-specific errors and migrationHint points at the migration.
+// null = not probed yet, true/false once known.
+let _wsSupported = null;
+
+function isMissingWorkspaceSchema(err) {
+  const code = err?.code ?? '';
+  const msg = String(err?.message ?? err ?? '');
+  const missingSchema =
+    ['PGRST204', 'PGRST205', '42703', '42P01'].includes(code) ||
+    /schema cache|does not exist/i.test(msg);
+  return missingSchema && /workspace|order_index/i.test(msg);
+}
+
+const WORKSPACE_MIGRATION_MSG =
+  'This database has no workspaces yet — run supabase/migrations/0007_workspaces.sql ' +
+  'in the Supabase SQL editor (take a backup first).';
+
+/** Workspaces in display order (order_index, then created_at). */
+async function fetchWorkspaces() {
+  const { data, error } = await db()
+    .from('workspaces')
+    .select('*')
+    .eq('user_id', await ownerId())
+    .order('order_index', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  _wsSupported = true;
+  return data ?? [];
+}
+
+/**
+ * Projects in display order (order_index, then created_at). `workspaceId`
+ * scopes to one workspace; `null` fetches unfiled projects only; omitted
+ * fetches everything.
+ */
+async function fetchProjects({ workspaceId } = {}) {
+  const uid = await ownerId();
+  if (_wsSupported !== false) {
+    let query = db().from('projects').select('*').eq('user_id', uid);
+    if (workspaceId === null) query = query.is('workspace_id', null);
+    else if (workspaceId !== undefined) query = query.eq('workspace_id', workspaceId);
+    const { data, error } = await query
+      .order('order_index', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (!error) {
+      _wsSupported = true;
+      return data ?? [];
+    }
+    if (workspaceId !== undefined || !isMissingWorkspaceSchema(error)) throw error;
+    _wsSupported = false;
+  }
+  // Pre-workspace database: the original flat list.
   const { data, error } = await db()
     .from('projects')
     .select('*')
-    .eq('user_id', await ownerId())
+    .eq('user_id', uid)
     .order('created_at', { ascending: true });
   if (error) throw error;
   return data ?? [];
 }
 
-async function resolveProjectRef(ref, projects) {
-  const all = projects ?? (await fetchProjects());
+// One read of each list per run — every resolver and status line shares them.
+// `_wsList` is null on a pre-workspace database.
+let _wsList;
+let _projectList;
+
+async function workspaceList() {
+  if (_wsList !== undefined) return _wsList;
+  if (_wsSupported === false) return (_wsList = null);
+  try {
+    _wsList = await fetchWorkspaces();
+  } catch (err) {
+    if (!isMissingWorkspaceSchema(err)) throw err;
+    _wsSupported = false;
+    _wsList = null;
+  }
+  return _wsList;
+}
+
+async function allProjects() {
+  if (_projectList === undefined) _projectList = await fetchProjects();
+  return _projectList;
+}
+
+/** Workspaces, or a friendly error on a database that hasn't run 0007 yet. */
+async function requireWorkspaces() {
+  const wss = await workspaceList();
+  if (wss === null) throw new Error(WORKSPACE_MIGRATION_MSG);
+  return wss;
+}
+
+/** Number of projects filed under a workspace (gates `workspace rm`). */
+async function countProjectsIn(workspaceId) {
+  const { count, error } = await db()
+    .from('projects')
+    .select('id', { count: 'exact', head: true })
+    .eq('workspace_id', workspaceId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/**
+ * Next free order_index at the end of a workspace: one past the highest in
+ * use. Not COUNT — delete a middle project and COUNT hands out a taken slot.
+ */
+async function nextProjectIndex(workspaceId) {
+  const { data, error } = await db()
+    .from('projects')
+    .select('order_index')
+    .eq('workspace_id', workspaceId)
+    .order('order_index', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? Number(data.order_index) + 1 : 0;
+}
+
+/** "Workspace / Project" for status lines; bare name on a pre-workspace database. */
+function qualifiedName(project) {
+  if (!_wsList) return project.name;
+  const ws = _wsList.find((w) => w.id === project.workspace_id);
+  return `${ws ? ws.name : 'Unfiled'} / ${project.name}`;
+}
+
+function workspaceListing(workspaces) {
+  return workspaces.map((w, i) => `  ${i + 1}. ${w.name}`).join('\n');
+}
+
+/**
+ * Read the state file, upgrading a pre-workspace one ({ projectId } only) by
+ * deriving workspaceId from that project's workspace_id and rewriting it.
+ */
+async function currentState() {
+  const state = await readState();
+  if (state.projectId && !state.workspaceId && (await workspaceList()) !== null) {
+    const p = (await allProjects()).find((x) => x.id === state.projectId);
+    if (p?.workspace_id) {
+      state.workspaceId = p.workspace_id;
+      await writeState(state);
+    }
+  }
+  return state;
+}
+
+/**
+ * The workspace scope for one run: --workspace (one-shot, never saved), else
+ * the current workspace from the state file (ignored if it no longer exists).
+ * `workspaces` is null on a pre-workspace database — callers then keep the
+ * original flat behaviour.
+ */
+async function workspaceContext(flags = {}) {
+  const workspaces = await workspaceList();
+  const state = await currentState();
+  if (workspaces === null) return { workspaces: null, workspace: null, state };
+  let workspace = null;
+  if (flags.workspace !== undefined) {
+    if (typeof flags.workspace !== 'string') {
+      throw new Error('--workspace requires a value (index, name, or id).');
+    }
+    workspace = resolveWorkspaceRef(flags.workspace, workspaces);
+  } else if (state.workspaceId) {
+    workspace = workspaces.find((w) => w.id === state.workspaceId) ?? null;
+  }
+  return { workspaces, workspace, state };
+}
+
+/** The workspace project refs resolve against: the scoped one, else the only one. */
+function effectiveWorkspace(ctx) {
+  if (ctx.workspace) return ctx.workspace;
+  if (ctx.workspaces && ctx.workspaces.length === 1) return ctx.workspaces[0];
+  return null;
+}
+
+/** Like effectiveWorkspace, but refuses (listing the choices) instead of null. */
+function requireWorkspace(ctx) {
+  const ws = effectiveWorkspace(ctx);
+  if (ws) return ws;
+  if (ctx.workspaces.length === 0) {
+    throw new Error('No workspaces yet. Create one:  sb workspace add "My Workspace"');
+  }
+  throw new Error(
+    'No workspace selected. Pick one with `sb workspace use <name|index>` or pass ' +
+      '--workspace. Workspaces:\n' +
+      workspaceListing(ctx.workspaces),
+  );
+}
+
+// A short bare number reads as an index and nothing else — never an id
+// prefix — so an out-of-range "9" can't silently land on the row whose UUID
+// happens to start with 9. Four or more digits ("9646") is a real id prefix.
+const isIndexLike = (ref) => /^\d{1,3}$/.test(ref);
+// An id prefix must be at least four hex characters. Anything shorter ("ed",
+// "c") is far too easy to type by accident — and a one- or two-character
+// match against a UUID is exactly how a scoped ref would slip into another
+// workspace's project.
+const isIdPrefix = (ref) => /^[0-9a-f]{4,}$/i.test(ref);
+
+function tryResolveWorkspaceRef(ref, workspaces) {
+  if (UUID_RE.test(ref)) return workspaces.find((w) => w.id === ref) ?? null;
+  const idx = Number(ref);
+  if (Number.isInteger(idx) && idx >= 1 && idx <= workspaces.length) return workspaces[idx - 1];
+  if (isIndexLike(ref)) return null;
+  const lower = ref.toLowerCase();
+  const byName = workspaces.filter((w) => w.name.toLowerCase() === lower);
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) {
+    throw new Error(`More than one workspace is named "${ref}" — use its index or id.`);
+  }
+  const byPrefix = isIdPrefix(ref) ? workspaces.filter((w) => w.id.startsWith(ref)) : [];
+  if (byPrefix.length === 1) return byPrefix[0];
+  return null;
+}
+
+/** <workspace> = 1-based index, exact name (case-insensitive), full UUID, or unique id prefix. */
+function resolveWorkspaceRef(ref, workspaces) {
+  if (!ref) throw new Error('A workspace reference (index, name, or id) is required.');
+  const ws = tryResolveWorkspaceRef(String(ref), workspaces);
+  if (!ws) throw new Error(`Could not resolve workspace "${ref}". Run \`sb workspaces\` to list them.`);
+  return ws;
+}
+
+/**
+ * Resolve a ref against ONE list of projects (a workspace's, in display
+ * order): index → exact name → id prefix → name prefix. Returns null when
+ * nothing matches; throws only on ambiguity.
+ */
+function tryResolveProjectIn(ref, projects, where) {
+  if (UUID_RE.test(ref)) return projects.find((p) => p.id === ref) ?? null;
+  const idx = Number(ref);
+  if (Number.isInteger(idx) && idx >= 1 && idx <= projects.length) return projects[idx - 1];
+  if (isIndexLike(ref)) return null;
+
+  const lower = ref.toLowerCase();
+  const exactName = projects.filter((p) => p.name.toLowerCase() === lower);
+  if (exactName.length === 1) return exactName[0];
+  if (exactName.length > 1) {
+    throw new Error(`More than one project${where} is named "${ref}" — use its index or id.`);
+  }
+
+  const idPrefix = isIdPrefix(ref) ? projects.filter((p) => p.id.startsWith(ref)) : [];
+  if (idPrefix.length === 1) return idPrefix[0];
+
+  const namePrefix = projects.filter((p) => p.name.toLowerCase().startsWith(lower));
+  if (namePrefix.length === 1) return namePrefix[0];
+  if (namePrefix.length > 1) {
+    throw new Error(
+      `"${ref}" matches more than one project${where} ` +
+        `(${namePrefix.map((p) => `"${p.name}"`).join(', ')}) — be more specific.`,
+    );
+  }
+  return null;
+}
+
+/**
+ * <project> resolution. Index, exact name, and unique name prefix resolve
+ * WITHIN the current (or --workspace) workspace only — a name never silently
+ * resolves into another workspace. A full UUID or unique id prefix is global.
+ * "Workspace/Project" (either side a name or index) is global too.
+ */
+async function resolveProjectRef(ref, ctx) {
   if (!ref) throw new Error('A project reference (index, name, or id) is required.');
+  ref = String(ref).trim();
+  ctx ??= await workspaceContext({});
+  const all = await allProjects();
+
+  // Pre-workspace database: the original flat resolution.
+  if (ctx.workspaces === null) {
+    const p = tryResolveProjectIn(ref, all, '');
+    if (p) return p;
+    throw new Error(`Could not resolve project "${ref}". Run \`sb projects\` to list them.`);
+  }
+
   if (UUID_RE.test(ref)) {
     const p = all.find((x) => x.id === ref);
     if (!p) throw new Error(`No project with id ${ref}`);
     return p;
   }
-  const idx = Number(ref);
-  if (Number.isInteger(idx) && idx >= 1 && idx <= all.length) return all[idx - 1];
+
+  // Qualified "Workspace/Project" — global, explicit.
+  const slash = ref.indexOf('/');
+  let slashHint = '';
+  if (slash > 0 && slash < ref.length - 1) {
+    const left = ref.slice(0, slash).trim();
+    const ws = tryResolveWorkspaceRef(left, ctx.workspaces);
+    if (ws) {
+      const inner = ref.slice(slash + 1).trim();
+      const mine = all.filter((p) => p.workspace_id === ws.id);
+      const p = tryResolveProjectIn(inner, mine, ` in "${ws.name}"`);
+      if (p) return p;
+      throw new Error(
+        `No project "${inner}" in workspace "${ws.name}". ` +
+          `Run \`sb projects --workspace "${ws.name}"\` to list them.`,
+      );
+    }
+    // Not a workspace on the left — fall through; the name itself may contain a slash.
+    slashHint = ` (no workspace named "${left}" — run \`sb workspaces\`)`;
+  }
 
   const lower = ref.toLowerCase();
+  const ws = effectiveWorkspace(ctx);
+  if (ws) {
+    const mine = all.filter((p) => p.workspace_id === ws.id);
+    const p = tryResolveProjectIn(ref, mine, ` in "${ws.name}"`);
+    if (p) return p;
+    if (isIndexLike(ref)) {
+      throw new Error(
+        `No project #${ref} in workspace "${ws.name}" (it has ${mine.length}). ` +
+          'Run `sb projects` to list them.',
+      );
+    }
+
+    const idPrefix = isIdPrefix(ref) ? all.filter((p) => p.id.startsWith(ref)) : [];
+    if (idPrefix.length === 1) {
+      const hit = idPrefix[0];
+      // An id is global by design, but say so when it points outside the
+      // workspace in scope — the one case a scoped command changes compartment.
+      if (hit.workspace_id !== ws.id) {
+        console.error(
+          `note: "${ref}" matched by id outside workspace "${ws.name}" — acting on ${qualifiedName(hit)}.`,
+        );
+      }
+      return hit;
+    }
+
+    const elsewhere = all.filter(
+      (p) => p.workspace_id !== ws.id && p.name.toLowerCase().startsWith(lower),
+    );
+    if (elsewhere.length) {
+      throw new Error(
+        `No project "${ref}" in workspace "${ws.name}". Did you mean ` +
+          `${elsewhere.map((p) => `"${qualifiedName(p)}"`).join(', ')}? Use the ` +
+          'qualified "Workspace/Project" form, or switch with `sb workspace use`.',
+      );
+    }
+    throw new Error(
+      `Could not resolve project "${ref}" in workspace "${ws.name}"${slashHint}. ` +
+        'Run `sb projects` to list them.',
+    );
+  }
+
+  // No workspace in scope (several exist, none selected): names must be
+  // unique across all of them; numbers mean nothing here.
+  if (isIndexLike(ref)) {
+    throw new Error(
+      'Project numbers are scoped to a workspace. Select one with `sb workspace use ' +
+        '<name|index>`, pass --workspace, or use "Workspace/N". Workspaces:\n' +
+        workspaceListing(ctx.workspaces),
+    );
+  }
   const exactName = all.filter((p) => p.name.toLowerCase() === lower);
   if (exactName.length === 1) return exactName[0];
-  if (exactName.length > 1) throw new Error(`More than one project is named "${ref}" — use its index or id.`);
-
-  const idPrefix = all.filter((p) => p.id.startsWith(ref));
+  if (exactName.length > 1) {
+    throw new Error(
+      `"${ref}" exists in more than one workspace: ` +
+        `${exactName.map((p) => `"${qualifiedName(p)}"`).join(', ')} — use the qualified name.`,
+    );
+  }
+  const idPrefix = isIdPrefix(ref) ? all.filter((p) => p.id.startsWith(ref)) : [];
   if (idPrefix.length === 1) return idPrefix[0];
-
   const namePrefix = all.filter((p) => p.name.toLowerCase().startsWith(lower));
   if (namePrefix.length === 1) return namePrefix[0];
-
-  throw new Error(`Could not resolve project "${ref}". Run \`sb projects\` to list them.`);
-}
-
-/** The project a scene command should act on: --project flag, else current, else
- * the only project, else an error that lists the choices. */
-async function resolveActiveProject(flags) {
-  const projects = await fetchProjects();
-  if (flags.project) return resolveProjectRef(String(flags.project), projects);
-  if (projects.length === 0) {
-    throw new Error('No projects yet. Create one:  sb project add "My Storyboard"');
+  if (namePrefix.length > 1) {
+    throw new Error(
+      `"${ref}" matches more than one project: ` +
+        `${namePrefix.map((p) => `"${qualifiedName(p)}"`).join(', ')} — use the qualified name.`,
+    );
   }
-  const state = await readState();
-  if (state.projectId) {
-    const p = projects.find((x) => x.id === state.projectId);
-    if (p) return p;
-  }
-  if (projects.length === 1) return projects[0];
   throw new Error(
-    'Multiple projects exist and none is selected. Pick one with ' +
-      '`sb project use <name|index>` or pass --project. Projects:\n' +
-      projects.map((p, i) => `  ${i + 1}. ${p.name}`).join('\n'),
+    `Could not resolve project "${ref}"${slashHint}. Run \`sb projects --all\` to list them.`,
   );
 }
 
-async function createProject(name, kind = 'storyboard') {
+/**
+ * The project a scene command should act on: --project flag, else the current
+ * project (only if it belongs to the current/--workspace workspace), else the
+ * workspace's only project, else an error that lists that workspace's choices.
+ */
+async function resolveActiveProject(flags) {
+  const ctx = await workspaceContext(flags);
+  if (flags.project === true) {
+    throw new Error('--project requires a value (index, name, or id).');
+  }
+  if (flags.project) return resolveProjectRef(String(flags.project), ctx);
+  const projects = await allProjects();
+
+  // Pre-workspace database: the original flat behaviour.
+  if (ctx.workspaces === null) {
+    if (projects.length === 0) {
+      throw new Error('No projects yet. Create one:  sb project add "My Storyboard"');
+    }
+    if (ctx.state.projectId) {
+      const p = projects.find((x) => x.id === ctx.state.projectId);
+      if (p) return p;
+    }
+    if (projects.length === 1) return projects[0];
+    throw new Error(
+      'Multiple projects exist and none is selected. Pick one with ' +
+        '`sb project use <name|index>` or pass --project. Projects:\n' +
+        projects.map((p, i) => `  ${i + 1}. ${p.name}`).join('\n'),
+    );
+  }
+
+  const scopeId = ctx.workspace?.id ?? null;
+  if (ctx.state.projectId) {
+    const p = projects.find((x) => x.id === ctx.state.projectId);
+    if (p && (p.workspace_id ?? null) === scopeId) return p;
+    // The saved project still exists but now lives in another workspace — it
+    // was moved from the browser, which cannot update this state file. Say so
+    // rather than silently falling through to whatever the current workspace
+    // happens to hold. Under a --workspace one-shot it is simply out of scope,
+    // and a deleted project still falls through as before.
+    if (p && ctx.workspace && typeof flags.workspace !== 'string') {
+      throw new Error(
+        `Current project "${qualifiedName(p)}" no longer lives in workspace ` +
+          `"${ctx.workspace.name}". Run \`sb project use <ref>\` to pick one, or pass --project.`,
+      );
+    }
+  }
+  const ws = requireWorkspace(ctx);
+  const mine = projects.filter((p) => p.workspace_id === ws.id);
+  if (mine.length === 0) {
+    throw new Error(
+      `Workspace "${ws.name}" has no projects yet. Create one:  sb project add "My Storyboard"`,
+    );
+  }
+  if (mine.length === 1) return mine[0];
+  throw new Error(
+    `Multiple projects exist in "${ws.name}" and none is selected. Pick one with ` +
+      '`sb project use <name|index>` or pass --project. Projects:\n' +
+      mine.map((p, i) => `  ${i + 1}. ${p.name}`).join('\n'),
+  );
+}
+
+/** Insert a project at the end of a workspace's list (workspace_id + order_index). */
+async function createProject(name, kind = 'storyboard', workspaceId = null) {
   const row = { user_id: await ownerId(), name: (name || '').trim() || 'Untitled project' };
   // Only send kind when non-default so plain storyboard adds still work on a
   // database that hasn't run the social-pipeline migration yet.
   if (kind !== 'storyboard') row.kind = kind;
+  if (workspaceId) {
+    row.workspace_id = workspaceId;
+    row.order_index = await nextProjectIndex(workspaceId);
+  }
   const { data, error } = await db().from('projects').insert(row).select().single();
   if (error) throw error;
   return data;
@@ -393,7 +830,7 @@ async function uploadSceneImage(uid, sceneId, src) {
     await db().storage.from(BUCKET).remove([path]).catch(() => {});
     throw new Error(
       `"${src}" is a video — the image command and --image only accept images. ` +
-        'Use --media / `sb media <post> add` on a social project instead.',
+        'Attach it as a clip with --media or `sb media <scene> add` instead.',
     );
   }
   return path;
@@ -416,9 +853,10 @@ function truncate(s, n) {
 }
 
 // Informational scope line goes to stderr so it never pollutes piped stdout
-// (e.g. `sb script get > file`).
-function announce(project) {
-  console.error(`Using project: ${project.name}`);
+// (e.g. `sb script get > file`). Printed as "Workspace / Project".
+async function announce(project) {
+  await workspaceList(); // make sure qualifiedName can see the workspace names
+  console.error(`Using project: ${qualifiedName(project)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -611,10 +1049,6 @@ function rowNoun(kind) {
 }
 
 /**
- * Multi-media rows (scene_media) back both social posts and merchandise
- * items; only storyboard scenes use the single image_path instead.
- */
-/**
  * Every kind can carry scene_media. Storyboard scenes additionally keep their
  * single hero still in image_path — --image sets that, --media attaches the
  * rendered clips and extra frames alongside it.
@@ -626,7 +1060,7 @@ function assertHasMedia() {
 function assertSocial(project, what) {
   if (projectKind(project) !== 'social') {
     throw new Error(
-      `"${project.name}" is a ${projectKind(project)} project — ${what} only applies to social ` +
+      `"${qualifiedName(project)}" is a ${projectKind(project)} project — ${what} only applies to social ` +
         'projects. Create one with:  sb project add "Name" --social',
     );
   }
@@ -637,7 +1071,7 @@ function assertShowcase(project, what) {
   const kind = projectKind(project);
   if (kind !== 'game' && kind !== 'music') {
     throw new Error(
-      `"${project.name}" is a ${kind} project — ${what} only applies to game or ` +
+      `"${qualifiedName(project)}" is a ${kind} project — ${what} only applies to game or ` +
         'music projects. Create one with:  sb project add "Name" --kind game',
     );
   }
@@ -646,7 +1080,7 @@ function assertShowcase(project, what) {
 function assertMerch(project, what) {
   if (projectKind(project) !== 'merchandise') {
     throw new Error(
-      `"${project.name}" is a ${projectKind(project)} project — ${what} only applies to ` +
+      `"${qualifiedName(project)}" is a ${projectKind(project)} project — ${what} only applies to ` +
         'merchandise projects. Create one with:  sb project add "Name" --kind merchandise',
     );
   }
@@ -655,7 +1089,7 @@ function assertMerch(project, what) {
 function assertStoryboard(project, what) {
   if (projectKind(project) !== 'storyboard') {
     throw new Error(
-      `"${project.name}" is a ${projectKind(project)} project — ${what} is for storyboard scenes. ` +
+      `"${qualifiedName(project)}" is a ${projectKind(project)} project — ${what} is for storyboard scenes. ` +
         'Use --media / `sb media <item> add` instead.',
     );
   }
@@ -693,24 +1127,200 @@ function formatSchedule(iso) {
 }
 
 // ---------------------------------------------------------------------------
+// Workspace commands
+// ---------------------------------------------------------------------------
+
+async function cmdWorkspaces() {
+  const workspaces = await requireWorkspaces();
+  const projects = await allProjects();
+  const state = await currentState();
+  if (workspaces.length === 0) {
+    console.log('No workspaces yet. Create one:  npm run sb -- workspace add "My Workspace"');
+    return;
+  }
+  const counts = {};
+  let unfiled = 0;
+  for (const p of projects) {
+    if (p.workspace_id) counts[p.workspace_id] = (counts[p.workspace_id] ?? 0) + 1;
+    else unfiled++;
+  }
+  console.log(`${workspaces.length} workspace(s):\n`);
+  workspaces.forEach((w, i) => {
+    const dot = w.id === state.workspaceId ? '●' : ' ';
+    const num = String(i + 1).padStart(2, ' ');
+    const n = counts[w.id] ?? 0;
+    console.log(
+      `${dot} ${num}. ${truncate(w.name, 30).padEnd(30, ' ')}  ${w.id.slice(0, 8)}  ` +
+        `${n} project${n === 1 ? '' : 's'}`,
+    );
+  });
+  if (unfiled) {
+    console.log(
+      `\n${unfiled} unfiled project${unfiled === 1 ? '' : 's'} (no workspace) — see ` +
+        '`sb projects --all`; file with `sb project move <project> <workspace>`.',
+    );
+  }
+}
+
+async function cmdWorkspace(positional, flags) {
+  const sub = positional[0];
+  if (sub === 'ls' || sub === 'list') return cmdWorkspaces();
+
+  if (sub === 'add' || sub === 'create' || sub === 'new') {
+    const name = positional.slice(1).join(' ').trim();
+    if (!name) throw new Error('Provide a name:  sb workspace add "My Workspace"');
+    const workspaces = await requireWorkspaces();
+    const { data, error } = await db()
+      .from('workspaces')
+      // One past the highest index in use — not the list length, which would
+      // reissue a slot freed by a deleted workspace.
+      .insert({
+        user_id: await ownerId(),
+        name,
+        order_index: workspaces.reduce((hi, w) => Math.max(hi, Number(w.order_index ?? 0)), -1) + 1,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    const state = await readState();
+    state.workspaceId = data.id;
+    delete state.projectId; // a new workspace holds nothing yet
+    await writeState(state);
+    console.log(`Created workspace "${data.name}" (${data.id.slice(0, 8)}) and made it current.`);
+    return;
+  }
+
+  if (sub === 'use' || sub === 'switch') {
+    const workspaces = await requireWorkspaces();
+    const ws = resolveWorkspaceRef(positional[1], workspaces);
+    await setCurrentWorkspace(ws, await allProjects());
+    console.log(`Current workspace: ${ws.name} (${ws.id.slice(0, 8)})`);
+    return;
+  }
+
+  if (sub === 'rename') {
+    const workspaces = await requireWorkspaces();
+    const ws = resolveWorkspaceRef(positional[1], workspaces);
+    const name = positional.slice(2).join(' ').trim();
+    if (!name) throw new Error('Provide a new name:  sb workspace rename <workspace> "New name"');
+    const { error } = await db()
+      .from('workspaces')
+      .update({ name, updated_at: new Date().toISOString() })
+      .eq('id', ws.id);
+    if (error) throw error;
+    console.log(`Renamed workspace "${ws.name}" to "${name}" (${ws.id.slice(0, 8)})`);
+    return;
+  }
+
+  if (sub === 'rm' || sub === 'remove' || sub === 'delete') {
+    const workspaces = await requireWorkspaces();
+    const ws = resolveWorkspaceRef(positional[1], workspaces);
+    // Refused while projects remain: the FK is ON DELETE NO ACTION, and even a
+    // cascade could never sweep Storage — delete or move the projects first.
+    const n = await countProjectsIn(ws.id);
+    if (n > 0) {
+      throw new Error(
+        `Workspace "${ws.name}" still holds ${n} project${n === 1 ? '' : 's'}. Move or ` +
+          'delete them first:  sb project move <project> <workspace>  ·  sb project rm <project>',
+      );
+    }
+    const { error } = await db().from('workspaces').delete().eq('id', ws.id);
+    if (error) throw error;
+    await clearCurrentWorkspaceIf(ws.id);
+    console.log(`Removed workspace "${ws.name}".`);
+    return;
+  }
+
+  throw new Error(
+    'Usage: sb workspace <add|use|rename|rm> …   (or `sb workspaces` to list)',
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Project commands
 // ---------------------------------------------------------------------------
 
-async function cmdProjects() {
-  const projects = await fetchProjects();
-  const state = await readState();
-  if (projects.length === 0) {
+function projectTag(p) {
+  // Blank tag for storyboard keeps the original output shape.
+  const kind = projectKind(p);
+  return kind === 'storyboard' ? '' : `  [${kind}]`;
+}
+
+/** `projects --all`: every workspace, grouped, qualified names, no bare numbers. */
+function printGroupedProjects(workspaces, projects, state) {
+  const unfiled = projects.filter((p) => !p.workspace_id);
+  console.log(`${workspaces.length} workspace(s), ${projects.length} project(s):\n`);
+  workspaces.forEach((w) => {
+    const mine = projects.filter((p) => p.workspace_id === w.id);
+    const dot = w.id === state.workspaceId ? '●' : ' ';
+    console.log(
+      `${dot} ${w.name}  (${mine.length} project${mine.length === 1 ? '' : 's'})  ${w.id.slice(0, 8)}`,
+    );
+    mine.forEach((p) => {
+      const pdot = p.id === state.projectId ? '●' : ' ';
+      console.log(
+        `    ${pdot} ${truncate(qualifiedName(p), 48).padEnd(48, ' ')}  ${p.id.slice(0, 8)}${projectTag(p)}`,
+      );
+    });
+  });
+  if (unfiled.length) {
+    console.log(`\n  Unfiled  (${unfiled.length} — file with \`sb project move <project> <workspace>\`)`);
+    unfiled.forEach((p) => {
+      const pdot = p.id === state.projectId ? '●' : ' ';
+      console.log(
+        `    ${pdot} ${truncate(p.name, 48).padEnd(48, ' ')}  ${p.id.slice(0, 8)}${projectTag(p)}`,
+      );
+    });
+  }
+}
+
+async function cmdProjects(flags) {
+  const ctx = await workspaceContext(flags);
+  const projects = await allProjects();
+
+  // Pre-workspace database: the original flat listing.
+  if (ctx.workspaces === null) {
+    if (projects.length === 0) {
+      console.log('No projects yet. Create one:  npm run sb -- project add "My Storyboard"');
+      return;
+    }
+    console.log(`${projects.length} project(s):\n`);
+    projects.forEach((p, i) => {
+      const dot = p.id === ctx.state.projectId ? '●' : ' ';
+      const num = String(i + 1).padStart(2, ' ');
+      console.log(`${dot} ${num}. ${truncate(p.name, 30).padEnd(30, ' ')}  ${p.id.slice(0, 8)}${projectTag(p)}`);
+    });
+    return;
+  }
+
+  if (ctx.workspaces.length === 0) {
+    console.log('No workspaces yet. Create one:  npm run sb -- workspace add "My Workspace"');
+    return;
+  }
+
+  if (flags.all === true || !ctx.workspace) {
+    printGroupedProjects(ctx.workspaces, projects, ctx.state);
+    if (!ctx.workspace) {
+      console.log(
+        '\nNo workspace selected — run `sb workspace use <name|index>` to scope project ' +
+          'numbers (or pass --workspace).',
+      );
+    }
+    return;
+  }
+
+  const ws = ctx.workspace;
+  const mine = projects.filter((p) => p.workspace_id === ws.id);
+  console.log(`Workspace: ${ws.name}  (${ws.id.slice(0, 8)})`);
+  if (mine.length === 0) {
     console.log('No projects yet. Create one:  npm run sb -- project add "My Storyboard"');
     return;
   }
-  console.log(`${projects.length} project(s):\n`);
-  projects.forEach((p, i) => {
-    const dot = p.id === state.projectId ? '●' : ' ';
+  console.log(`${mine.length} project(s):\n`);
+  mine.forEach((p, i) => {
+    const dot = p.id === ctx.state.projectId ? '●' : ' ';
     const num = String(i + 1).padStart(2, ' ');
-    // Blank tag for storyboard keeps the original output shape.
-    const kind = projectKind(p);
-    const tag = kind === 'storyboard' ? '' : `  [${kind}]`;
-    console.log(`${dot} ${num}. ${truncate(p.name, 30).padEnd(30, ' ')}  ${p.id.slice(0, 8)}${tag}`);
+    console.log(`${dot} ${num}. ${truncate(p.name, 30).padEnd(30, ' ')}  ${p.id.slice(0, 8)}${projectTag(p)}`);
   });
 }
 
@@ -732,20 +1342,32 @@ async function cmdProject(positional, flags) {
         );
       }
     }
-    const p = await createProject(name, kind);
-    await setCurrentProject(p.id);
+    const ctx = await workspaceContext(flags);
+    // Pre-workspace database: insert without a workspace, as before.
+    const ws = ctx.workspaces === null ? null : requireWorkspace(ctx);
+    const p = await createProject(name, kind, ws?.id ?? null);
+    // --workspace is a one-shot scope everywhere else, so it must not change
+    // the saved state here either; without it the new project becomes current.
+    const oneShot = typeof flags.workspace === 'string';
+    if (!oneShot) await setCurrentProject(p);
     const label = kind === 'storyboard' ? 'project' : `${kind} project`;
-    console.log(`Created ${label} "${p.name}" (${p.id.slice(0, 8)}) and made it current.`);
+    console.log(
+      `Created ${label} "${qualifiedName(p)}" (${p.id.slice(0, 8)})` +
+        (oneShot ? '.' : ' and made it current.'),
+    );
     return;
   }
   if (sub === 'use' || sub === 'switch') {
-    const p = await resolveProjectRef(positional[1]);
-    await setCurrentProject(p.id);
-    console.log(`Current project: ${p.name} (${p.id.slice(0, 8)})`);
+    const ctx = await workspaceContext(flags);
+    const p = await resolveProjectRef(positional[1], ctx);
+    await setCurrentProject(p);
+    if (ctx.workspaces === null) console.log(`Current project: ${p.name} (${p.id.slice(0, 8)})`);
+    else console.log(`Current: ${qualifiedName(p)} (${p.id.slice(0, 8)})`);
     return;
   }
   if (sub === 'rename') {
-    const p = await resolveProjectRef(positional[1]);
+    const ctx = await workspaceContext(flags);
+    const p = await resolveProjectRef(positional[1], ctx);
     const name = positional.slice(2).join(' ');
     if (!name) throw new Error('Provide a new name:  sb project rename <project> "New name"');
     const { error } = await db()
@@ -753,11 +1375,39 @@ async function cmdProject(positional, flags) {
       .update({ name: name.trim(), updated_at: new Date().toISOString() })
       .eq('id', p.id);
     if (error) throw error;
-    console.log(`Renamed to "${name.trim()}" (${p.id.slice(0, 8)})`);
+    console.log(`Renamed to "${qualifiedName({ ...p, name: name.trim() })}" (${p.id.slice(0, 8)})`);
+    return;
+  }
+  if (sub === 'move' || sub === 'mv') {
+    const ctx = await workspaceContext(flags);
+    const workspaces = await requireWorkspaces();
+    const p = await resolveProjectRef(positional[1], ctx);
+    const target = resolveWorkspaceRef(positional[2], workspaces);
+    const from = qualifiedName(p);
+    if (p.workspace_id === target.id) {
+      console.log(`"${from}" is already in workspace "${target.name}".`);
+      return;
+    }
+    // Only workspace_id + order_index change: share_token (review links) and
+    // Storage paths are untouched, so nothing else about the project moves.
+    const order_index = await nextProjectIndex(target.id);
+    const { error } = await db()
+      .from('projects')
+      .update({ workspace_id: target.id, order_index, updated_at: new Date().toISOString() })
+      .eq('id', p.id);
+    if (error) throw error;
+    // Keep it current if it was — under its new workspace.
+    const state = await readState();
+    if (state.projectId === p.id) {
+      state.workspaceId = target.id;
+      await writeState(state);
+    }
+    console.log(`Moved "${from}" → "${target.name} / ${p.name}" (${p.id.slice(0, 8)})`);
     return;
   }
   if (sub === 'rm' || sub === 'remove' || sub === 'delete') {
-    const p = await resolveProjectRef(positional[1]);
+    const ctx = await workspaceContext(flags);
+    const p = await resolveProjectRef(positional[1], ctx);
     const uid = await ownerId();
     // Clear storage for every scene before the cascade drops the rows.
     const scenes = await orderedScenes(p.id);
@@ -765,10 +1415,12 @@ async function cmdProject(positional, flags) {
     const { error } = await db().from('projects').delete().eq('id', p.id);
     if (error) throw error;
     await clearCurrentProjectIf(p.id);
-    console.log(`Removed project "${p.name}" and its ${scenes.length} scene(s).`);
+    console.log(`Removed project "${qualifiedName(p)}" and its ${scenes.length} scene(s).`);
     return;
   }
-  throw new Error('Usage: sb project <add|use|rename|rm> …   (or `sb projects` to list)');
+  throw new Error(
+    'Usage: sb project <add|use|rename|move|rm> …   (or `sb projects` to list)',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -777,7 +1429,7 @@ async function cmdProject(positional, flags) {
 
 async function cmdList(flags) {
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   const scenes = await orderedScenes(project.id);
 
   const listKind = projectKind(project);
@@ -922,7 +1574,7 @@ async function cmdList(flags) {
 async function cmdAdd(flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
 
   const kind = projectKind(project);
   const merchFlagUsed =
@@ -1018,7 +1670,7 @@ async function cmdAdd(flags) {
 
 async function cmdSet(positional, flags) {
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   const scene = await resolveScene(project.id, positional[0]);
 
   const kind = projectKind(project);
@@ -1075,7 +1727,7 @@ async function cmdSet(positional, flags) {
 async function cmdQuote(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   assertMerch(project, 'the quote command');
   const scene = await resolveScene(project.id, positional[0]);
   const sub = positional[1] ?? 'list';
@@ -1160,7 +1812,7 @@ async function cmdQuote(positional, flags) {
 async function cmdOrder(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   assertMerch(project, 'the order command');
   const scene = await resolveScene(project.id, positional[0]);
   const sub = positional[1] ?? 'list';
@@ -1246,7 +1898,7 @@ async function cmdOrder(positional, flags) {
 async function cmdMedia(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   assertHasMedia(project, 'the media command');
   const noun = rowNoun(projectKind(project));
   const scene = await resolveScene(project.id, positional[0]);
@@ -1337,7 +1989,7 @@ async function cmdMedia(positional, flags) {
 
 async function cmdShare(flags) {
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
 
   if (flags.regenerate === true) {
     const token = randomUUID();
@@ -1369,7 +2021,7 @@ async function cmdShare(flags) {
 async function cmdImage(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   assertStoryboard(project, 'the image command');
   const scene = await resolveScene(project.id, positional[0]);
   const src = positional[1];
@@ -1393,7 +2045,7 @@ async function cmdImage(positional, flags) {
 async function cmdRm(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   const scene = await resolveScene(project.id, positional[0]);
   const { error } = await db().from('scenes').delete().eq('id', scene.id);
   if (error) throw error;
@@ -1404,7 +2056,7 @@ async function cmdRm(positional, flags) {
 async function cmdScript(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   const sub = positional[0];
   if (sub === 'get') {
     const { data, error } = await db()
@@ -1602,7 +2254,7 @@ function buildH3Graph({ prompt, width, height, frames, steps, seed, turbo, image
 async function cmdAnimate(positional, flags) {
   const uid = await ownerId();
   const project = await resolveActiveProject(flags);
-  announce(project);
+  await announce(project);
   assertStoryboard(project, 'the animate command');
   const scene = await resolveScene(project.id, positional[0]);
 
@@ -1745,15 +2397,28 @@ async function cmdAnimate(positional, flags) {
 function printHelp() {
   console.log(
     [
-      'sb — Storyboard agent CLI (storyboards + social pipelines + merchandise)',
+      'sb — Storyboard agent CLI (workspaces › projects: storyboards, social',
+      'pipelines, merchandise boards, game + music showcases)',
       '',
       'Usage: npm run sb -- <command> [args]',
       '',
-      'Project commands:',
-      '  projects                               List your projects (● = current)',
-      '  project add <name…> [--social|--merch] Create a project + make it current',
-      '  project use <project>                  Set the current project',
+      'Workspace commands:',
+      '  workspaces                             List workspaces (● = current) + project counts',
+      '  workspace add <name…>                  Create a workspace + make it current',
+      '  workspace use <workspace>              Set the current workspace',
+      '  workspace rename <workspace> <name…>   Rename a workspace',
+      '  workspace rm <workspace>               Delete an EMPTY workspace (refused while',
+      '                                         it holds projects — move/delete them first)',
+      '  (`ws` is an alias for `workspace`; `ws ls` lists them too)',
+      '',
+      'Project commands (act within the current workspace; override with --workspace):',
+      '  projects [--all]                       List the current workspace’s projects',
+      '                                         (● = current); --all: every workspace, grouped',
+      '  project add <name…> [--kind K|--social|--merch] [--workspace W]',
+      '                                         Create a project in the workspace + make it current',
+      '  project use <project>                  Set the current project (and its workspace)',
       '  project rename <project> <name…>       Rename a project',
+      '  project move <project> <workspace>     File a project under another workspace (alias: mv)',
       '  project rm <project>                   Delete a project (+ its scenes/media)',
       '',
       'Scene/post commands (act on the current project; override with --project):',
@@ -1788,9 +2453,16 @@ function printHelp() {
       '                                         clip (local ComfyUI / MiniMax H3) and',
       '                                         attach it to the scene as media',
       '',
-      '<project> = index from `projects`, a name, a full UUID, or an id prefix.',
+      '<workspace> = index from `workspaces`, exact name (case-insensitive), full UUID,',
+      '  or a unique id prefix.',
+      '<project> = index from `projects`, exact name, or unique name prefix — resolved',
+      '  WITHIN the current (or --workspace) workspace only; a full UUID or unique id',
+      '  prefix is global; "Workspace/Project" (either side a name or index) is global.',
+      '  A name that exists in several workspaces must be qualified.',
       '<scene>/<post> = 1-based index from `list`, a full UUID, or an id prefix.',
-      '--project <project> scopes a scene command to a project for one run.',
+      '--kind is one of: storyboard (default), social, merchandise, game, music.',
+      '--workspace <workspace> scopes one run without changing the current workspace;',
+      '  --project <project> scopes a scene command to a project for one run.',
       '--image/--media accept a local file path or an http(s) URL. --media repeats.',
       `--status (social) is one of: ${STATUSES.join(', ')}.`,
       `--status (merchandise) is one of: ${MERCH_STATUSES.join(', ')}.`,
@@ -1824,8 +2496,13 @@ async function main() {
   const { flags, positional } = parseArgs(rest, new Set(['media']));
 
   switch (command) {
+    case 'workspaces':
+      return cmdWorkspaces();
+    case 'workspace':
+    case 'ws':
+      return cmdWorkspace(positional, flags);
     case 'projects':
-      return cmdProjects();
+      return cmdProjects(flags);
     case 'project':
       return cmdProject(positional, flags);
     case 'list':
@@ -1861,14 +2538,21 @@ async function main() {
   }
 }
 
-// Errors that smell like "the social-pipeline migration hasn't run here yet"
-// get a pointer to the fix instead of a bare Postgres/PostgREST code.
+// Errors that smell like "a migration hasn't run here yet" get a pointer to
+// the fix instead of a bare Postgres/PostgREST code.
 function migrationHint(err) {
   const code = err?.code ?? '';
   const msg = String(err?.message ?? err ?? '');
   const missingSchema =
     ['PGRST204', 'PGRST205', '42703', '42P01'].includes(code) ||
     /schema cache|does not exist/i.test(msg);
+  if (missingSchema && /workspaces?\b|workspace_id/i.test(msg)) {
+    return (
+      '\nThis database hasn’t run the workspaces migration yet. Run ' +
+      'supabase/migrations/0007_workspaces.sql in the Supabase SQL editor ' +
+      '(take a backup first).'
+    );
+  }
   if (missingSchema && /kind|share_token|scene_media|copy|status|scheduled_at|platforms/i.test(msg)) {
     return (
       '\nThis database hasn’t run the social-pipeline migration yet. Run ' +

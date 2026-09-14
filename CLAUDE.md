@@ -1,41 +1,95 @@
 # Storyboard — notes for Claude
 
-A single-user cloud app (Next.js 14 + Supabase). The user can have many
-**projects**, and each project has a **kind**:
+A single-user cloud app (Next.js 14 + Supabase). Content is organised in
+exactly two levels: **workspaces** hold **projects**, and projects hold
+**scenes** (or posts / products / games / tracks, depending on the project's
+kind). A workspace is a folder, not a board — it has a name, a description,
+and a position, nothing else, and it is *not* a project kind. Today
+"Phantom Ranch" is one workspace holding five projects; "Roaring Pines" will be
+another.
+
+**Workspaces organise; they do not restrict.** The site has one shared password
+that signs everyone in as the single owner, so anyone who can log in sees every
+workspace. What a workspace buys is that a Roaring Pines board never lists
+Phantom Ranch projects (and vice versa) in its switcher, its home page, or the
+CLI's scoped resolution. The only *enforced* boundary for outsiders remains the
+per-project `/share/{token}` link.
+
+Each project has a **kind** (five of them):
 
 - `storyboard` — the original film board: scenes with name, description,
-  generation **prompt**, and one **image**, plus a screenplay **script**.
+  generation **prompt**, one hero **image** (plus optional media clips
+  alongside it), and a screenplay **script**.
 - `social` — a **social-post pipeline**: posts with **copy** (the post text),
   multiple **media** (images and/or a video, ordered), a **schedule**
   date/time, a **status** (`idea → draft → ready → scheduled → posted`), and
   target **platforms**. The project's script row doubles as planning **Notes**
   (posting criteria, cadence, content pillars). Nothing publishes from here —
   posts are adapted and published with other tools later.
+- `merchandise` — a product-tracking board: products with images, a concept
+  description, a sale price, a development time, and a stage
+  (`concept → sourcing → quotes → orders → ready`); under each product sit
+  many supplier quotes and many orders.
+- `game` — playable games: screenshots, an optional short video, a summary, a
+  play link, and a stage (`prototype → in_development → playable → released`).
+- `music` — tracks headed for Spotify: cover art, the audio itself, a summary,
+  a listen link, and a stage
+  (`demo → recorded → mixed → mastered → submitted → released`).
 
 The browser app is just one client; the **source of truth is Supabase**
-(Postgres `projects` + `scenes` + `scene_media` + `script`, private Storage
-bucket `scene-images` — which holds videos too, despite the name). URLs: `/`
-lists projects, `/p/{projectId}` is one board/pipeline, and `/share/{token}`
-is a **public read-only review page** (unguessable per-project token, no
-login) for sharing with the team.
+(Postgres `workspaces` + `projects` + `scenes` + `scene_media` + `script` +
+`merch_quotes` + `merch_orders`, private Storage bucket `scene-images` — which
+holds videos and audio too, despite the name). URLs: `/` is the **workspace
+index**, `/w/{workspaceId}` is **one workspace's projects**, `/p/{projectId}`
+is one board/pipeline (unchanged), and `/share/{token}` is a **public
+read-only review page** (unguessable per-project token, no login) for sharing
+with the team. There is no workspace-level share link. Camera References stays
+global at `/camera-references`.
 
 ## Pushing to the app (the `sb` CLI)
 
-When the user wants to add/update projects, scenes, posts, prompts, media, or
-schedules "in the storyboard/pipeline," use the agent CLI — do not tell them to
-use the browser. It writes to the same Supabase backend the deployed app reads
-from, so changes appear instantly.
+When the user wants to add/update workspaces, projects, scenes, posts, prompts,
+media, or schedules "in the storyboard/pipeline," use the agent CLI — do not
+tell them to use the browser. It writes to the same Supabase backend the
+deployed app reads from. Board contents update live (`scenes`, `scene_media`,
+`script`, and the merch tables are in the realtime publication — see 0008), but
+the workspace index and project lists do not: `projects` and `workspaces` are
+not published, so after `workspace add` or `project move` the user reloads to
+see the change.
 
-Scene/post commands act on the **current project** (remembered in the
-gitignored `.sb-state.json`). Always confirm which project you're operating on
-— when in doubt, run `npm run sb -- projects` and ask the user, or pass
-`--project`.
+The CLI remembers a **current workspace** and a **current project** (both in
+the gitignored `.sb-state.json`: `{ workspaceId, projectId }`; an old file
+holding only `projectId` derives the workspace from that project on first use
+and rewrites itself). Project commands act within the current workspace;
+scene/post commands act on the current project. Always confirm both — when in
+doubt, run `npm run sb -- workspaces` and `npm run sb -- projects` and ask the
+user, or pass `--workspace` / `--project`.
+
+Workspaces:
 
 ```
-npm run sb -- projects                   # list projects (● = current, [social] tag)
-npm run sb -- project add "Tornado Film" # create a storyboard project + make it current
-npm run sb -- project add "Q3 Social" --social   # create a social pipeline
-npm run sb -- project use "Q3 Social"    # switch the current project
+npm run sb -- workspaces                        # list workspaces (● = current) with project counts, numbered 1..n
+npm run sb -- workspace add "Roaring Pines"     # create; becomes current; clears the current project
+npm run sb -- workspace use "Phantom Ranch"     # switch; drops the current project if it isn't in here
+npm run sb -- workspace rename 2 "New name"
+npm run sb -- workspace rm 2                    # REFUSED while it still holds projects (move/delete them first)
+npm run sb -- project move Merchandise "Roaring Pines"   # re-file a project (alias: mv)
+```
+
+`ws` is an alias for `workspace` (`sb ws ls` = `sb workspaces`). `project move`
+appends the project to the end of the target workspace and never touches its
+share token; if the moved project was current it stays current and the current
+workspace follows it.
+
+Projects (within the current workspace):
+
+```
+npm run sb -- projects                   # the current workspace's projects, numbered 1..n (header names the workspace)
+npm run sb -- projects --all             # every workspace, grouped, as "Workspace / Project" — no bare numbers
+npm run sb -- project add "Tornado Film"          # storyboard project inside the current workspace + make it current
+npm run sb -- project add "Q3 Social" --social    # social pipeline (also --merch, or --kind game|music|…)
+npm run sb -- project add "Games" --kind game --workspace "Roaring Pines"   # create in another workspace
+npm run sb -- project use "Q3 Social"    # sets BOTH current workspace and project; prints "Current: <Workspace> / <Project>"
 npm run sb -- project rename 2 "New name"
 npm run sb -- project rm 3               # deletes the project + all its scenes/media
 
@@ -45,6 +99,14 @@ npm run sb -- share --regenerate         # rotate the link (old one stops workin
 npm run sb -- script get                 # script (storyboard) / notes (social)
 npm run sb -- script set ./notes.md
 ```
+
+- `--kind` is `storyboard` (default), `social`, `merchandise`, `game`, or
+  `music`; `--social` and `--merch` are shorthands.
+- `project add` needs a workspace: the current one, `--workspace`, or — if
+  exactly one workspace exists — that one. Otherwise it refuses and lists the
+  workspaces.
+- With no current workspace, `projects` behaves like `--all` and hints to run
+  `sb workspace use`.
 
 Storyboard projects (unchanged):
 
@@ -81,30 +143,70 @@ npm run sb -- media 2 rm 1                # 1-based index from `media` list
 npm run sb -- media 2 order 3,1,2         # full permutation
 ```
 
-- `<project>` is an index from `projects`, a name, a full UUID, or an id prefix.
+Merchandise, games, and music (see `.claude/skills/storyboard/SKILL.md` for
+the research rules):
+
+```
+npm run sb -- add --name "Luna Plushie" --desc "12in soft plush" --media ./front.png
+npm run sb -- quote 1 add --supplier "Shenzhen Plush Co" --cost 8.40 --moq 250 --lead-time "5-7 weeks"
+npm run sb -- order 1 add --supplier "Shenzhen Plush Co" --qty 500 --cost 8.40 --status placed
+npm run sb -- set 1 --price 29.99 --dev-time "5-7 weeks" --status quotes
+npm run sb -- add --name "Echo Runner" --desc "Endless runner" --link "https://itch.io/…" --status playable
+```
+
+- `<workspace>` is a 1-based index from `workspaces`, an exact name
+  (case-insensitive), a full UUID, or a unique id prefix. A purely numeric
+  ref of 1–3 digits is always an index, never an id prefix (so `--project 9`
+  can't land on a project whose UUID happens to start with 9); id prefixes
+  need 4+ characters.
+- `<project>` is a 1-based index from `projects`, an exact name, or a unique
+  name prefix — all resolved **within the current (or `--workspace`) workspace
+  only**. A full UUID or unique id prefix is global. A qualified
+  `"Workspace/Project"` ref (slash-separated; either side a name or index) is
+  global too. A name that matches in more than one workspace errors and lists
+  the qualified names; a name prefix never silently resolves into another
+  workspace.
 - `<scene>`/`<post>` is a **1-based index** from `list`, a full UUID, or an id prefix.
-- Commands print `Using project: X` (to stderr) so you can confirm the target.
-- `--project <project>` scopes a single command without changing the current one.
+- Commands print `Using project: <Workspace> / <Project>` (to stderr) so you
+  can confirm the target; every status line names the project the same
+  qualified way.
+- `--project <project>` and `--workspace <workspace>` scope a single command
+  without changing the saved state. `--workspace` is accepted by every command
+  that resolves a project.
+- When no `--project` is given and the saved project isn't in the current
+  workspace, the CLI uses the workspace's only project if it has exactly one;
+  otherwise it refuses and prints that workspace's numbered list.
 - `--image`/`--media` take a **local file path or an http(s) URL** (URLs are
-  downloaded then uploaded). `--media` repeats for multiple items. Useful for
-  piping in media you just generated (Higgsfield, Kling, etc.).
+  downloaded then uploaded). `--media` repeats for multiple items and works on
+  every kind; storyboard scenes keep their single hero still in `--image` and
+  can carry `--media` clips alongside it. Useful for piping in media you just
+  generated (Higgsfield, Kling, etc.).
 - `--schedule` is **local time**, `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`.
-- `--status`: idea, draft, ready, scheduled, posted. Platform names normalize
+- `--status` is validated against the project's kind: social idea, draft,
+  ready, scheduled, posted; merchandise concept, sourcing, quotes, orders,
+  ready; game prototype, in_development, playable, released; music demo,
+  recorded, mixed, mastered, submitted, released. Platform names normalize
   (twitter→x, ig→instagram, …); unknown slugs are stored with a warning.
 - Videos: prefer **.mp4 (H.264)**; `.mov` often won't play in Chrome. Files over
   ~50MB hit Supabase's default per-file cap (raiseable in Storage → Settings).
-- Social flags on a storyboard project (or `--image` on a social one) error
-  with guidance — that's the kind gate working, not a bug.
+- Kind-specific flags on the wrong kind (`--copy` on a storyboard, `--image` on
+  a social project, `--link` outside game/music) error with guidance — that's
+  the kind gate working, not a bug.
 - `add` places the scene/post at the end of the board (social: end of the
   **backlog**; scheduled posts display grouped by date in the app).
 
-### Picking the right project
+### Picking the right workspace and project
 
-If the user names a project, `project use` it (or pass `--project`) before
-acting. If they don't and more than one project exists, the CLI refuses scene
-commands and lists them — surface that to the user and ask which one rather
-than guessing. Social content belongs in `social` projects; film scenes in
-`storyboard` projects.
+Pick the **workspace first**: Roaring Pines content never goes into Phantom
+Ranch, and vice versa. If the user names a workspace, `workspace use` it (or
+pass `--workspace`). If the user names a project, `project use` it (or pass
+`--project`) — that sets both. If they name neither and the current workspace
+holds more than one project, the CLI refuses scene commands and prints that
+workspace's numbered list — surface that to the user and ask which one rather
+than guessing. If the same project name exists in two workspaces, use a
+qualified ref (`"Phantom Ranch/Merchandise"`) or ask — never guess. Social
+content belongs in `social` projects; film scenes in `storyboard` projects;
+products, games, and tracks in their own kinds.
 
 ### When `sb` reports it's not configured
 
@@ -116,28 +218,68 @@ on failure. Optional: `STORYBOARD_APP_URL` makes `sb share` print full URLs.
 
 ### When the CLI suggests running a migration
 
-Errors mentioning missing columns/tables (`kind`, `share_token`, `scene_media`,
-…) mean the database predates the social pipeline: run
-`supabase/migrations/0002_social_pipeline.sql` in the Supabase SQL editor
-(backup first). It's additive and idempotent.
+Errors mentioning missing columns/tables mean the database is behind the code.
+Migrations live in `supabase/migrations/` and run **in order** in the Supabase
+SQL editor (backup first); each is additive and idempotent:
+
+1. `0001_multi_project.sql` — single board → projects
+2. `0002_social_pipeline.sql` — `kind`, `share_token`, post columns, `scene_media`
+3. `0003_merchandise.sql` — merchandise kind + product fields
+4. `0004_realtime_deletes.sql` — replica identity full for realtime deletes
+5. `0005_merch_quotes_orders.sql` — `merch_quotes` + `merch_orders`
+6. `0006_games_music.sql` — game/music kinds, `link_url`, audio media
+7. `0007_workspaces.sql` — `workspaces` table, `projects.workspace_id` + `order_index`,
+   backfill of the existing projects into "Phantom Ranch" (`workspace_id` nullable here)
+8. `0008_realtime_publication.sql` — adds `scenes`, `scene_media`, `script`,
+   `merch_quotes`, `merch_orders` to the `supabase_realtime` publication (it was
+   empty, so no live update had ever fired)
+9. `0009_workspace_required.sql` — `projects.workspace_id` NOT NULL. Run ONLY
+   after the web build and CLI that always send it are live; it halts loudly if
+   any project is still unfiled rather than guessing a workspace for it.
+
+Errors about `kind`, `share_token`, or `scene_media` point at 0002; errors
+about `workspaces` or `workspace_id` point at 0007.
 
 ## App architecture (for reference)
 
-- `src/lib/types.ts` — `Project` (with `kind`, `share_token`), `Scene` (post
-  fields: `copy`, `status`, `scheduled_at`, `platforms`), `SceneMedia`,
-  `ScriptRow`, `POST_STATUSES`, `SCENE_IMAGES_BUCKET`.
-- `src/lib/projects.ts` — project CRUD (delete also clears image folders);
-  `createProject` takes a `kind`.
+- `src/lib/types.ts` — `Workspace`, `Project` (with `kind`, `workspace_id`
+  — `string | null` until a later migration makes it NOT NULL — `order_index`,
+  `share_token`), `Scene` (post fields: `copy`, `status`, `scheduled_at`,
+  `platforms`; `link_url` for game/music; `sale_price`/`dev_time` for
+  merchandise), `SceneMedia`, `ScriptRow`, `KIND_LABELS`, `POST_STATUSES` and
+  the merch/game/music status lists, `SCENE_IMAGES_BUCKET`.
+- `src/lib/workspaces.ts` — `fetchWorkspaces` / `fetchWorkspace` /
+  `createWorkspace` / `renameWorkspace` / `countWorkspaceProjects` /
+  `deleteWorkspace` (refuses while the workspace still holds projects).
+- `src/lib/projects.ts` — project CRUD scoped to a workspace:
+  `fetchProjects(supabase, { workspaceId })`, `createProject(supabase, userId,
+  workspaceId, name, kind)` (workspaceId required; `order_index` = count in
+  that workspace), `moveProject(supabase, id, workspaceId)` (appends; never
+  touches `share_token`), `persistProjectOrder`; delete also clears image
+  folders.
 - `src/lib/scenes.ts` / `script.ts` — original scene + script ops (untouched).
 - `src/lib/posts.ts` / `media.ts` / `pipeline.ts` — post field updates,
   scene_media CRUD, and backlog/schedule grouping + date helpers.
-- `src/lib/storage.ts` — upload + signed-URL helpers (images and video mimes).
-  The `sb` CLI mirrors these server-side with the service-role key.
-- `src/lib/supabase/admin.ts` + `src/lib/share.ts` — server-only service-role
-  client + share-token data fetch, used ONLY by `/share/[token]` (the one
-  place the service key runs in the deployed app; set it on Vercel).
-- `src/app/p/[projectId]/page.tsx` — branches on `project.kind`:
-  `Storyboard` (original, untouched) vs `PostPipeline`.
+- `src/lib/storage.ts` — upload + signed-URL helpers (image, video, and audio
+  mimes). The `sb` CLI mirrors these server-side with the service-role key.
+- `src/lib/supabase/admin.ts` — server-only service-role client. It runs in
+  exactly two places in the deployed app: `src/lib/share.ts` (share-token data
+  fetch for `/share/[token]`) and `src/app/login/actions.ts` (the shared
+  password gate mints the owner's session via a magic-link token). Set
+  `SUPABASE_SERVICE_ROLE_KEY` on Vercel.
+- Routes: `src/app/page.tsx` → `WorkspacesHome` (a card per workspace with
+  project count + kind chips; New/Rename/Delete workspace; an "Unfiled" list
+  with a "File under…" select for projects whose `workspace_id` is null).
+  `src/app/w/[workspaceId]/page.tsx` → `ProjectsHome` scoped to one workspace
+  (New project creates inside it; each card has Move to… another workspace /
+  Rename / Delete). `src/app/p/[projectId]/page.tsx` branches on
+  `project.kind`: `Storyboard` (original, untouched), `PostPipeline`,
+  `MerchCatalog`, `ShowcaseCatalog` (game + music). Board toolbars show a
+  breadcrumb S › Workspace › Project; `ProjectSwitcher` lists ONLY siblings in
+  the same workspace, plus "New project in <Workspace>", "All <Workspace>
+  projects" (→ `/w/{id}`), a "Switch workspace" section linking to each other
+  workspace's `/w/{id}` (workspace names only — never their projects), and
+  "All workspaces" (→ `/`).
 - Pipeline UI: `PostPipeline` (state owner) → `PipelineToolbar` (Add post,
   Notes, Share-link copy), `PipelineBoard` (draggable Backlog + date-grouped
   Scheduled), `PostCardView`, `PostDetail`/`PostEditor` (copy, platforms,
@@ -147,12 +289,17 @@ Errors mentioning missing columns/tables (`kind`, `share_token`, `scene_media`,
   (full copy, media carousels, playable video; noindex). `src/middleware.ts`
   exempts `/share/*` from auth.
 - `supabase/schema.sql` — full current schema for a FRESH project.
-  `supabase/migrations/0001_multi_project.sql` (single-board → projects) and
-  `0002_social_pipeline.sql` (adds kind/share_token/post columns/scene_media)
-  upgrade an EXISTING DB in order. Run in the SQL editor with a backup first.
-- Image/video object paths stay `{user_id}/{scene_id}/{uuid}.{ext}` (no
-  project segment — scene ids are unique). RLS scopes by the first path
-  segment (`user_id`). Scene deletion sweeps the whole folder, which also
-  removes post media.
+  `supabase/migrations/0001` … `0009` upgrade an EXISTING DB in order (list
+  above). Run in the SQL editor with a backup first. `projects.workspace_id`
+  is nullable in 0007 and is tightened to NOT NULL by 0009 once every client
+  sends it. The FK is ON DELETE NO ACTION: deleting a workspace
+  is refused while it holds projects (a cascade would orphan Storage objects,
+  which Postgres never deletes).
+- Image/video/audio object paths stay `{user_id}/{scene_id}/{uuid}.{ext}` (no
+  workspace or project segment — scene ids are unique), so moving a project
+  between workspaces moves no files. RLS scopes by the first path segment
+  (`user_id`). Scene deletion sweeps the whole folder, which also removes post
+  media.
 - No REST API routes — the web app talks to Supabase directly with the anon
-  key under RLS; the CLI and the share page use the service-role key.
+  key under RLS; the CLI, the share page, and the login gate use the
+  service-role key.

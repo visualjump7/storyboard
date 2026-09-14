@@ -166,6 +166,24 @@ export function Note({ size = 15, className }: IconProps) {
   );
 }
 
+export function Folder({ size = 15, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+    </Stroke>
+  );
+}
+
+export function FolderMove({ size = 15, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3" />
+      <path d="M3 7v11a2 2 0 0 0 2 2h7" />
+      <path d="M16 16h6m0 0-2.5-2.5M22 16l-2.5 2.5" />
+    </Stroke>
+  );
+}
+
 export function Tag({ size = 15, className }: IconProps) {
   return (
     <Stroke size={size} className={className}>

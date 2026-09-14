@@ -23,7 +23,7 @@ import {
 } from '@/lib/media';
 import { useSignedUrls } from '@/hooks/useSignedUrls';
 import { signImageDownloadUrl } from '@/lib/storage';
-import type { Project, Scene, SceneMedia, SceneTextFields } from '@/lib/types';
+import type { Project, Scene, SceneMedia, SceneTextFields, Workspace } from '@/lib/types';
 import { Grid } from './Grid';
 import { SceneDetail } from './SceneDetail';
 import { ScriptPanel } from './ScriptPanel';
@@ -36,14 +36,20 @@ const DEFAULT_SIZE = 268;
 type StoryboardProps = {
   userId: string;
   project: Project;
+  /** The workspace this board is filed under; null for an unfiled project. */
+  workspace: Workspace | null;
+  /** Projects in the same workspace, for the switcher — fetched on the server. */
+  siblings: Project[];
+  /** Every workspace, for the switcher's "Switch workspace" section. */
+  workspaces: Workspace[];
 };
 
-export function Storyboard({ userId, project }: StoryboardProps) {
+export function Storyboard({ userId, project, workspace, siblings, workspaces }: StoryboardProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
   const [scenes, setScenes] = useState<Scene[] | null>(null); // null = loading
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>(siblings);
   const [error, setError] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [mediaMap, setMediaMap] = useState<Record<string, SceneMedia[]>>({});
@@ -75,7 +81,7 @@ export function Storyboard({ userId, project }: StoryboardProps) {
   // Load the project list for the switcher dropdown.
   useEffect(() => {
     let active = true;
-    fetchProjects(supabase)
+    fetchProjects(supabase, { workspaceId: project.workspace_id })
       .then((p) => {
         if (active) setProjects(p);
       })
@@ -85,7 +91,7 @@ export function Storyboard({ userId, project }: StoryboardProps) {
     return () => {
       active = false;
     };
-  }, [supabase]);
+  }, [supabase, project.workspace_id]);
 
   // Live updates: reflect external changes (e.g. scenes created/edited from
   // Cowork) in real time. Merges incrementally so it never clobbers an
@@ -319,6 +325,8 @@ export function Storyboard({ userId, project }: StoryboardProps) {
         userId={userId}
         project={project}
         projects={projects}
+        workspace={workspace}
+        workspaces={workspaces}
         sceneCount={list.length}
         cardSize={cardSize}
         minSize={MIN_SIZE}

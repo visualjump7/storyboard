@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import Link from 'next/link';
-import type { Project } from '@/lib/types';
-import { Camera, GridIcon, Plus, ScriptLines, SignOut } from './icons';
+import type { Project, Workspace } from '@/lib/types';
+import { Camera, ChevronRight, GridIcon, Plus, ScriptLines, SignOut } from './icons';
 import { ProjectSwitcher } from './ProjectSwitcher';
 
 type ToolbarProps = {
@@ -9,6 +9,10 @@ type ToolbarProps = {
   userId: string;
   project: Project;
   projects: Project[];
+  /** The workspace this board is filed under; null for an unfiled project. */
+  workspace: Workspace | null;
+  /** Every workspace, for the switcher's "Switch workspace" section. */
+  workspaces: Workspace[];
   sceneCount: number;
   cardSize: number;
   minSize: number;
@@ -25,6 +29,8 @@ export function Toolbar({
   userId,
   project,
   projects,
+  workspace,
+  workspaces,
   sceneCount,
   cardSize,
   minSize,
@@ -37,16 +43,34 @@ export function Toolbar({
 }: ToolbarProps) {
   return (
     <div className="z-10 flex h-[60px] flex-none items-center gap-5 border-b border-line bg-surface px-[22px]">
-      {/* Brand + project switcher */}
-      <div className="flex items-center gap-2">
+      {/* Brand › workspace › project switcher */}
+      <div className="flex min-w-0 items-center gap-2">
         <Link
           href="/"
-          aria-label="All projects"
+          aria-label="All workspaces"
           className="flex h-6 w-6 flex-none items-center justify-center rounded-md bg-accent text-[14px] font-bold text-canvas"
         >
           S
         </Link>
-        <ProjectSwitcher supabase={supabase} userId={userId} project={project} projects={projects} />
+        {workspace && (
+          <>
+            <Link
+              href={`/w/${workspace.id}`}
+              className="hidden max-w-[160px] truncate text-[13px] text-muted hover:text-ink md:inline"
+            >
+              {workspace.name}
+            </Link>
+            <ChevronRight size={13} className="hidden flex-none text-[#4a4a54] md:inline" />
+          </>
+        )}
+        <ProjectSwitcher
+          supabase={supabase}
+          userId={userId}
+          project={project}
+          projects={projects}
+          workspace={workspace}
+          workspaces={workspaces}
+        />
         <span className="ml-0.5 text-[12.5px] text-muted">
           {sceneCount} {sceneCount === 1 ? 'scene' : 'scenes'}
         </span>
