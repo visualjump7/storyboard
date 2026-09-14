@@ -2,7 +2,7 @@
  * Which UI a project gets: a film storyboard, a social-post pipeline, or a
  * merchandise tracking board.
  */
-export type ProjectKind = 'storyboard' | 'social' | 'merchandise' | 'game' | 'music';
+export type ProjectKind = 'storyboard' | 'social' | 'merchandise' | 'game' | 'music' | 'character';
 
 /** Display label for each kind — one copy, shared by every card and header. */
 export const KIND_LABELS: Record<ProjectKind, string> = {
@@ -11,13 +11,15 @@ export const KIND_LABELS: Record<ProjectKind, string> = {
   merchandise: 'Merchandise',
   game: 'Games',
   music: 'Music',
+  character: 'Characters',
 };
 
 /**
  * Kinds that share the showcase surface: an item with media, a summary, a
- * link out, and a stage.
+ * link out, and a stage. A character sheet is the same shape — reference
+ * images, a turnaround, a voice clip, a profile — plus its visual-DNA prompt.
  */
-export type ShowcaseKind = Extract<ProjectKind, 'game' | 'music'>;
+export type ShowcaseKind = Extract<ProjectKind, 'game' | 'music' | 'character'>;
 
 /** Stages a game moves through. */
 export const GAME_STATUSES = ['prototype', 'in_development', 'playable', 'released'] as const;
@@ -27,7 +29,14 @@ export type GameStatus = (typeof GAME_STATUSES)[number];
 export const MUSIC_STATUSES = ['demo', 'recorded', 'mixed', 'mastered', 'submitted', 'released'] as const;
 export type MusicStatus = (typeof MUSIC_STATUSES)[number];
 
-export const SHOWCASE_STATUS_LABELS: Record<GameStatus | MusicStatus, string> = {
+/** Stages a character sheet moves through, ending locked for production. */
+export const CHARACTER_STATUSES = ['concept', 'design', 'approved', 'locked'] as const;
+export type CharacterStatus = (typeof CHARACTER_STATUSES)[number];
+
+/** Every stage a showcase item can hold, across game, music, and character. */
+export type ShowcaseStatus = GameStatus | CharacterStatus | MusicStatus;
+
+export const SHOWCASE_STATUS_LABELS: Record<ShowcaseStatus, string> = {
   prototype: 'Prototype',
   in_development: 'In development',
   playable: 'Playable',
@@ -37,32 +46,81 @@ export const SHOWCASE_STATUS_LABELS: Record<GameStatus | MusicStatus, string> = 
   mixed: 'Mixed',
   mastered: 'Mastered',
   submitted: 'Submitted',
+  concept: 'Concept',
+  design: 'In design',
+  approved: 'Approved',
+  locked: 'Locked',
 };
 
-/** The stages, link label, and wording that differ between game and music. */
+/**
+ * Per-kind wording and stages for the showcase surface. Everything that
+ * differs between a game, a track, and a character lives here, so the
+ * components branch on nothing but this record.
+ */
 export const SHOWCASE_META: Record<
   ShowcaseKind,
   {
     noun: { one: string; many: string };
-    statuses: readonly (GameStatus | MusicStatus)[];
+    statuses: readonly ShowcaseStatus[];
+    /** Label + placeholder for the name field. */
+    itemLabel: string;
+    itemPlaceholder: string;
+    /** Label + placeholder for the free-text description. */
+    summaryLabel: string;
+    summaryPlaceholder: string;
+    /** When set, the editor shows the generation prompt under this label. */
+    promptLabel?: string;
+    promptPlaceholder?: string;
     linkLabel: string;
     linkPlaceholder: string;
     openLabel: string;
+    /** Empty-board hint and the notes panel placeholder. */
+    emptyHint: string;
+    notesPlaceholder: string;
   }
 > = {
   game: {
     noun: { one: 'game', many: 'games' },
     statuses: GAME_STATUSES,
+    itemLabel: 'Game name',
+    itemPlaceholder: 'Game title',
+    summaryLabel: 'Summary',
+    summaryPlaceholder: 'What the game is, how it plays, what’s in this build…',
     linkLabel: 'Play link',
     linkPlaceholder: 'https://itch.io/…',
     openLabel: 'Play',
+    emptyHint: 'Add a game — screenshots, a short video, a summary, and a link to play it.',
+    notesPlaceholder: 'Build notes, playtest feedback, store copy…',
   },
   music: {
     noun: { one: 'track', many: 'tracks' },
     statuses: MUSIC_STATUSES,
+    itemLabel: 'Track name',
+    itemPlaceholder: 'Track title',
+    summaryLabel: 'Summary',
+    summaryPlaceholder: 'Mood, instrumentation, who it’s for, release notes…',
     linkLabel: 'Listen link',
     linkPlaceholder: 'https://open.spotify.com/…',
     openLabel: 'Listen',
+    emptyHint: 'Add a track — cover art, the audio, a summary, and a link to listen.',
+    notesPlaceholder: 'Release plan, distributor, metadata, credits…',
+  },
+  character: {
+    noun: { one: 'character', many: 'characters' },
+    statuses: CHARACTER_STATUSES,
+    itemLabel: 'Character name',
+    itemPlaceholder: 'Lorenzo',
+    summaryLabel: 'Profile',
+    summaryPlaceholder: 'Role, personality, backstory, how they speak…',
+    promptLabel: 'Visual DNA',
+    promptPlaceholder:
+      'The look, locked: species, build, outfit, colours, signature details — the prompt that keeps every render on-model.',
+    linkLabel: 'Reference link',
+    linkPlaceholder: 'https://… (voice model, design doc, turnaround)',
+    openLabel: 'Open',
+    emptyHint:
+      'Add a character — reference images, a turnaround, a voice sample, and the profile that keeps them consistent.',
+    notesPlaceholder: 'Cast notes, relationships, voice direction…',
   },
 };
 
@@ -79,7 +137,7 @@ export const MERCH_STATUSES = ['concept', 'sourcing', 'quotes', 'orders', 'ready
 export type MerchStatus = (typeof MERCH_STATUSES)[number];
 
 /** Every value `scenes.status` can hold, across all project kinds. */
-export type SceneStatus = PostStatus | MerchStatus | GameStatus | MusicStatus;
+export type SceneStatus = PostStatus | MerchStatus | ShowcaseStatus;
 
 /**
  * Narrow a stored status to a social one. A row carrying a merchandise stage
@@ -191,8 +249,10 @@ export interface Scene {
 export interface ShowcaseFields {
   name: string;
   description: string;
-  status: GameStatus | MusicStatus;
+  status: ShowcaseStatus;
   link_url: string;
+  /** Character: the visual-DNA generation prompt. Only written when shown. */
+  prompt: string;
 }
 
 /**
@@ -202,10 +262,10 @@ export interface ShowcaseFields {
 export function asShowcaseStatus(
   kind: ShowcaseKind,
   status: SceneStatus | string,
-): GameStatus | MusicStatus {
+): ShowcaseStatus {
   const allowed = SHOWCASE_META[kind].statuses;
   return (allowed as readonly string[]).includes(status)
-    ? (status as GameStatus | MusicStatus)
+    ? (status as ShowcaseStatus)
     : allowed[0];
 }
 

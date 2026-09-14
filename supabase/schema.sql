@@ -8,10 +8,10 @@
 -- kind that picks its UI — a film storyboard ('storyboard'), a social-post
 -- pipeline ('social' — posts with copy, media, schedule, status), a
 -- merchandise board ('merchandise' — products with quotes and orders), or a
--- showcase of games ('game') or music tracks ('music'). To upgrade an existing
--- database run the numbered files in supabase/migrations/ (0001 → 0009, in
--- order) instead — they preserve existing data. This file mirrors what those
--- migrations produce.
+-- showcase of games ('game'), music tracks ('music'), or character sheets
+-- ('character'). To upgrade an existing database run the numbered files in
+-- supabase/migrations/ (0001 → 0010, in order) instead — they preserve
+-- existing data. This file mirrors what those migrations produce.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ create policy "workspaces_delete_own" on public.workspaces
 -- projects (belong to a workspace; a user can have many; each owns its own
 -- scenes + script). Ordering is per-workspace.
 -- kind picks the UI: 'storyboard' (scene board), 'social' (post pipeline),
--- 'merchandise' (product board), 'game' or 'music' (showcase).
+-- 'merchandise' (product board), 'game', 'music', or 'character' (showcase).
 -- share_token backs the public read-only /share/{token} review page.
 --
 -- workspace_id is ON DELETE NO ACTION (the default), NOT cascade. A cascade
@@ -71,7 +71,7 @@ create table if not exists public.projects (
   name         text not null default 'Untitled project',
   description  text not null default '',
   kind         text not null default 'storyboard'
-               check (kind in ('storyboard', 'social', 'merchandise', 'game', 'music')),
+               check (kind in ('storyboard', 'social', 'merchandise', 'game', 'music', 'character')),
   share_token  uuid not null default gen_random_uuid(),
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
@@ -119,9 +119,13 @@ create policy "projects_delete_own" on public.projects
 -- platforms are meaningful and media lives in scene_media. In a 'merchandise'
 -- project each row is a PRODUCT (sale_price/dev_time here; its suppliers and
 -- orders live in merch_quotes/merch_orders). In a 'game' or 'music' project
--- each row is an ITEM with a link_url out to play/listen. Storyboard rows
--- keep those columns at their defaults and use image_path as before (and can
--- carry clips in scene_media too).
+-- each row is an ITEM with a link_url out to play/listen. In a 'character'
+-- project each row is one CHARACTER: description is the profile, prompt is
+-- the visual-DNA generation prompt, link_url points at a voice model or
+-- design doc, and its reference images / turnaround video / voice-reference
+-- audio live in scene_media. Storyboard rows keep those columns at their
+-- defaults and use image_path as before (and can carry clips in scene_media
+-- too).
 -- ---------------------------------------------------------------------------
 create table if not exists public.scenes (
   id           uuid primary key default gen_random_uuid(),
@@ -137,9 +141,10 @@ create table if not exists public.scenes (
   status       text not null default 'draft'
                check (status in (
                  'idea', 'draft', 'ready', 'scheduled', 'posted',       -- social
-                 'concept', 'sourcing', 'quotes', 'orders',             -- merchandise
+                 'concept', 'sourcing', 'quotes', 'orders',             -- merchandise (+ character: concept)
                  'prototype', 'in_development', 'playable', 'released', -- game
-                 'demo', 'recorded', 'mixed', 'mastered', 'submitted'   -- music
+                 'demo', 'recorded', 'mixed', 'mastered', 'submitted',  -- music
+                 'design', 'approved', 'locked'                         -- character
                )),
   scheduled_at timestamptz,               -- social: when the post should go out
   platforms    text[] not null default '{}',  -- social: target platform slugs
@@ -179,7 +184,8 @@ alter table public.scenes replica identity full;
 
 -- ---------------------------------------------------------------------------
 -- scene_media (ordered images/videos/audio per scene; a row can have many).
--- Every project kind can carry media; 'audio' exists for music tracks.
+-- Every project kind can carry media; 'audio' exists for music tracks and
+-- character voice references.
 -- Objects live in the same private scene-images bucket under the same
 -- "{user_id}/{scene_id}/{uuid}.{ext}" convention, so the storage policies and
 -- folder-cleanup code below cover them with no extra rules.

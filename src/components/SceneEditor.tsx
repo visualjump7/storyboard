@@ -5,6 +5,7 @@ import type { Scene, SceneMedia, SceneTextFields } from '@/lib/types';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
 import { Download, Spinner, Trash, Upload } from './icons';
 import { MediaStrip } from './MediaStrip';
+import { useDialog } from './Dialog';
 
 type SceneEditorProps = {
   /** The live scene. Keyed by scene.id by the parent, so navigating to another
@@ -43,6 +44,7 @@ export function SceneEditor({
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const dialogs = useDialog();
 
   const [form, setForm] = useState<SceneTextFields>(() => ({
     name: scene.name,
@@ -94,6 +96,7 @@ export function SceneEditor({
 
   return (
     <div className="flex-1 overflow-y-auto px-[22px] pb-8 pt-5">
+      {dialogs.dialog}
       {/* Image area: click to upload, or drag & drop */}
       <div
         role="button"
@@ -246,8 +249,14 @@ export function SceneEditor({
 
       <button
         type="button"
-        onClick={() => {
-          if (window.confirm('Delete this scene? This cannot be undone.')) onDelete(scene);
+        onClick={async () => {
+          const ok = await dialogs.confirm({
+            title: 'Delete this scene?',
+            message: 'Its image and clips go with it. This cannot be undone.',
+            confirmLabel: 'Delete scene',
+            danger: true,
+          });
+          if (ok) onDelete(scene);
         }}
         className="mt-6 flex h-[34px] items-center gap-[7px] rounded-lg border border-[#34242a] px-[13px] text-[12.5px] text-[#c96a6a] transition-colors hover:border-[#4a2a30] hover:bg-[#251618]"
       >

@@ -40,7 +40,7 @@ export default async function ProjectPage({ params }: { params: { projectId: str
   // Same route, four surfaces chosen by kind; the storyboard is the fallback.
   if (project.kind === 'social') return <PostPipeline {...shared} />;
   if (project.kind === 'merchandise') return <MerchCatalog {...shared} />;
-  if (project.kind === 'game' || project.kind === 'music') {
+  if (project.kind === 'game' || project.kind === 'music' || project.kind === 'character') {
     return <ShowcaseCatalog kind={project.kind} {...shared} />;
   }
   return <Storyboard {...shared} />;

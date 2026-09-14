@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { createProject, deleteProject, moveProject, renameProject } from '@/lib/projects';
 import { formatNextDate } from '@/lib/pipeline';
 import { KIND_LABELS, type Project, type ProjectKind, type Workspace } from '@/lib/types';
+import { useDialog } from './Dialog';
 import {
   Camera,
   ChevronRight,
@@ -15,6 +16,7 @@ import {
   GridIcon,
   Note,
   Pencil,
+  Person,
   Plus,
   ScriptLines,
   SignOut,
@@ -56,6 +58,7 @@ export function ProjectsHome({
   const [menuOpen, setMenuOpen] = useState<'header' | 'empty' | null>(null);
   const [moveFor, setMoveFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const dialogs = useDialog();
 
   const otherWorkspaces = useMemo(
     () => workspaces.filter((w) => w.id !== workspace.id),
@@ -64,10 +67,22 @@ export function ProjectsHome({
 
   async function handleNew(kind: ProjectKind) {
     setMenuOpen(null);
+    const name = await dialogs.prompt({
+      title: `New ${KIND_LABELS[kind] ?? 'Storyboard'} project in ${workspace.name}`,
+      placeholder: 'Project name',
+      confirmLabel: 'Create',
+    });
+    if (name == null) return;
     setBusy(true);
     setError(null);
     try {
-      const p = await createProject(supabase, userId, workspace.id, 'Untitled project', kind);
+      const p = await createProject(
+        supabase,
+        userId,
+        workspace.id,
+        name.trim() || 'Untitled project',
+        kind,
+      );
       router.push(`/p/${p.id}`);
     } catch (e) {
       setError((e as Error)?.message ?? 'Failed to create project.');
@@ -76,7 +91,11 @@ export function ProjectsHome({
   }
 
   async function handleRename(p: Project) {
-    const name = window.prompt('Rename project', p.name);
+    const name = await dialogs.prompt({
+      title: 'Rename project',
+      initial: p.name,
+      confirmLabel: 'Rename',
+    });
     if (name == null) return;
     const next = name.trim() || p.name;
     setProjects((prev) => prev.map((x) => (x.id === p.id ? { ...x, name: next } : x)));
@@ -90,12 +109,12 @@ export function ProjectsHome({
 
   async function handleMove(p: Project, target: Workspace) {
     setMoveFor(null);
-    if (
-      !window.confirm(
-        `Move "${p.name}" to ${target.name}? Its share link keeps working; it just files under ${target.name} from now on.`,
-      )
-    )
-      return;
+    const ok = await dialogs.confirm({
+      title: `Move "${p.name}" to ${target.name}?`,
+      message: `Its share link keeps working; it just files under ${target.name} from now on.`,
+      confirmLabel: 'Move',
+    });
+    if (!ok) return;
     setProjects((prev) => prev.filter((x) => x.id !== p.id));
     try {
       await moveProject(supabase, p.id, target.id);
@@ -112,13 +131,16 @@ export function ProjectsHome({
         ? 'its posts, media, and notes'
         : p.kind === 'merchandise'
           ? 'its products, images, quotes, and orders'
-          : p.kind === 'game' || p.kind === 'music'
+          : p.kind === 'game' || p.kind === 'music' || p.kind === 'character'
             ? 'its items, media, and notes'
             : 'its scenes, images, clips, and script';
-    if (
-      !window.confirm(`Delete "${p.name}"? This permanently deletes ${what}. This cannot be undone.`)
-    )
-      return;
+    const ok = await dialogs.confirm({
+      title: `Delete "${p.name}"?`,
+      message: `This permanently deletes ${what}. This cannot be undone.`,
+      confirmLabel: 'Delete project',
+      danger: true,
+    });
+    if (!ok) return;
     setProjects((prev) => prev.filter((x) => x.id !== p.id));
     try {
       await deleteProject(supabase, p);
@@ -136,6 +158,7 @@ export function ProjectsHome({
 
   return (
     <div className="min-h-screen bg-canvas font-sans text-ink">
+      {dialogs.dialog}
       {/* Header: breadcrumb back to the workspace index */}
       <div className="flex h-[60px] items-center gap-[11px] border-b border-line bg-surface px-[22px]">
         <Link
@@ -203,7 +226,7 @@ export function ProjectsHome({
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#303039] bg-well py-20 text-center">
             <div className="text-[14px] font-medium text-[#a6a6ae]">No projects in {workspace.name} yet</div>
             <div className="mt-1 text-[12.5px] text-muted">
-              Add a storyboard, social pipeline, merchandise board, game, or music project.
+              Add a storyboard, social pipeline, merchandise board, game, music, or characters project.
             </div>
             <div className="mt-4">
               <NewProjectButton
@@ -437,6 +460,20 @@ function NewProjectButton({
                 <span className="block text-[13.5px] font-medium text-bright">Music</span>
                 <span className="mt-0.5 block text-[11.5px] leading-snug text-muted">
                   Tracks with audio, cover art, and a listen link
+                </span>
+              </span>
+            </button>
+            <div className="h-px bg-line" />
+            <button
+              type="button"
+              onClick={() => onPick('character')}
+              className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[#1a1a20]"
+            >
+              <Person size={15} className="mt-0.5 flex-none text-muted" />
+              <span>
+                <span className="block text-[13.5px] font-medium text-bright">Characters</span>
+                <span className="mt-0.5 block text-[11.5px] leading-snug text-muted">
+                  Character sheets — reference images, voice, visual DNA
                 </span>
               </span>
             </button>

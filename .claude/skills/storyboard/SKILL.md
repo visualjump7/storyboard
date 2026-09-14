@@ -1,6 +1,6 @@
 ---
 name: storyboard
-description: Push workspaces, projects, scenes, social posts, merchandise items, games, music tracks, prompts, media, and schedules into the cloud storyboard/pipeline app (the Supabase-backed Next.js board in this repo). Use whenever the user wants to add, update, reorder, or remove a storyboard scene, a social post, a merchandise item, a game, or a track; create/switch/rename/delete a workspace or move a project between workspaces ("put this in Roaring Pines", "new workspace", "move Merchandise into Phantom Ranch", "which workspace is that in", "what's in Phantom Ranch"); create/switch/rename/delete a project (storyboard, social pipeline, merchandise board, game, or music); set a generation prompt or post copy; attach or replace scene images or post media (images/video/audio); set a posting schedule/status/platforms; research and fill in a product's supplier/cost/sale price/development time; get the read-only share link; animate a storyboard scene's still into a video clip (local MiniMax H3 image-to-video via ComfyUI); or read back the current board — e.g. "add this to the storyboard", "new project for the tornado film", "add this to the social pipeline", "schedule that post for Friday", "mark post 2 ready", "find me a manufacturer for this plushie and fill in the costs", "what would we sell this for", "what's in the pipeline", "give me the share link", "animate scene 2". Also use after generating or downloading an image/video the user wants saved as a scene, post, or product shot.
+description: Push workspaces, projects, scenes, social posts, merchandise items, games, music tracks, character sheets, prompts, media, and schedules into the cloud storyboard/pipeline app (the Supabase-backed board in this repo). Use whenever the user wants to add, update, reorder, or remove a storyboard scene, social post, merchandise item, game, track, or character; create/switch/rename/delete a workspace or move a project between workspaces; create/switch/rename/delete a project (storyboard, social, merchandise, game, music, or characters); set a generation prompt, post copy, or a character's visual DNA / profile / stage; attach reference images, a turnaround, a voice reference, or images/video/audio; set a post's schedule/status/platforms; research a product's supplier/cost/sale price/development time; get the read-only share link; animate a storyboard still into a video clip (local MiniMax H3 via ComfyUI); or read back the board. Also use after generating or downloading an image/video/audio the user wants saved as a scene, post, product shot, or character reference. E.g. "add this to the storyboard", "put this in Roaring Pines", "what's in Phantom Ranch", "new project for the tornado film", "schedule that post for Friday", "mark post 2 ready", "find me a manufacturer for this plushie and fill in the costs", "give me the share link", "animate scene 2", "make a character sheet for Lorenzo", "attach this voice reference to Bruno", "what's Echo's visual DNA", "mark Gomez approved".
 ---
 
 # Storyboard + Social Pipeline
@@ -11,12 +11,12 @@ add appears in the browser instantly. Never tell the user to use the browser to 
 something this CLI can do.
 
 Content has exactly two levels: **workspaces** hold **projects**, and projects
-hold scenes/posts/products/games/tracks. A workspace is a folder with a name, not
+hold scenes/posts/products/games/tracks/characters. A workspace is a folder with a name, not
 a board — "Phantom Ranch" is one (it holds the five original projects); "Roaring
 Pines" will be another. Nothing about a project changes when it moves between
 workspaces: its `/p/{id}` URL, share link, and media all stay put.
 
-Projects come in five kinds:
+Projects come in six kinds:
 - **storyboard** — film boards: scenes with a prompt and one hero image, plus
   optional media clips alongside it (rendered by `animate` or attached with
   `--media`).
@@ -33,11 +33,16 @@ Projects come in five kinds:
   play link, and a stage (prototype/in_development/playable/released).
 - **music** — tracks headed for Spotify: cover art, the audio itself, a summary,
   a listen link, and a stage (demo/recorded/mixed/mastered/submitted/released).
+- **character** — character sheets: one item per character, with reference
+  images, an optional turnaround / short video, a voice-reference audio clip, a
+  **Profile** (`--desc`), the **Visual DNA** prompt (`--prompt`), a reference
+  link (`--link`), and a stage (concept/design/approved/locked). Same showcase
+  surface as game and music.
 
 ## Games and music
 
 Both use the same commands — media, a summary, and `--link` for where to play
-or listen:
+or listen (characters share this surface too — see the next section):
 
 ```
 npm run sb -- project add "Games" --kind game
@@ -54,9 +59,51 @@ npm run sb -- media 1 add ./cover.png ./guardian-theme.wav
 - Audio uploads (mp3/wav/flac/m4a/aac/ogg) are classified automatically and get
   a player in the app and on the share page. Cover art is just an image on the
   same track.
-- `--link` only applies to game and music projects; it errors elsewhere.
+- `--link` only applies to game, music, and character projects; it errors
+  elsewhere.
 - Stages differ per kind — `--status playable` is a game stage, `--status
-  mastered` a music one; the CLI validates against the project's own kind.
+  mastered` a music one, `--status approved` a character one; the CLI
+  validates against the project's own kind.
+
+## Characters
+
+A character project is the cast bible — one item per character, on the same
+showcase surface as games and music. Its fields map onto the ordinary flags:
+
+- `--desc` is the **Profile**: role, personality, backstory, how they speak.
+- `--prompt` is the **Visual DNA**: the generation/look prompt (species,
+  build, outfit, colours, signature details) that keeps every render on-model.
+- `--link` is the **Reference link**: voice model, design doc, turnaround.
+- `--media` holds the reference images, an optional turnaround / short video,
+  and the voice-reference audio clip (mp3/wav/… — it gets a player in the app).
+- `--status` is the stage: `concept → design → approved → locked` (Concept /
+  In design / Approved / Locked). New characters start at `concept`.
+
+```
+npm run sb -- project add "Cast" --kind character
+npm run sb -- add --name "Lorenzo" --desc "Team medic; deadpan, warm" \
+  --prompt "teen cream retriever, black beanie, headphones round neck, black medic vest with red cross, black cargo trousers, black sneakers" \
+  --link "https://…" --status design \
+  --media ./lorenzo-front.png --media ./lorenzo-voice.mp3
+npm run sb -- media 1 add ./lorenzo-turnaround.mp4 ./lorenzo-side.png
+npm run sb -- set 1 --status approved
+```
+
+Rules for this work:
+- **The Visual DNA is locked text.** When generating any image or video of a
+  character that has a sheet, paste its Visual DNA **verbatim** into the prompt
+  — never paraphrase, trim, or "improve" it; a rewrite is how a design drifts
+  off-model. Change it on the sheet (`set <n> --prompt "…"`) only when the user
+  is deliberately changing the design, and then use the new text verbatim
+  from that point on.
+- `list` on a character project prints each character's stage, its image /
+  video / audio counts, link, profile, and the **full Visual DNA** (untruncated,
+  on its `visual DNA:` line). Copy the prompt from there verbatim rather than
+  reconstructing the look from memory.
+- The Visual DNA shows in the app's editor only; the public share page shows
+  the profile, media, and link but never the prompt.
+- Keep one character per item. Alternate outfits or ages belong in the
+  profile and media of that character, not as a second item.
 
 ## Merchandise: research is the job
 
@@ -112,7 +159,7 @@ never goes into Phantom Ranch, and vice versa.
   ambiguous name and lists the qualified options; a name prefix never silently
   resolves into another workspace.
 - Social content belongs in a `[social]` project; film scenes in a storyboard one;
-  products, games, and tracks in their own kinds.
+  products, games, tracks, and characters in their own kinds.
 - Commands print `Using project: <Workspace> / <Project>` to stderr; glance at it
   to confirm the target.
 
@@ -143,7 +190,7 @@ Project commands (act within the current workspace):
 | List every workspace's projects, grouped | `npm run sb -- projects --all` |
 | Create a storyboard + switch to it | `npm run sb -- project add "Tornado Film"` |
 | Create a social pipeline + switch to it | `npm run sb -- project add "Q3 Social" --social` |
-| Create another kind | `npm run sb -- project add "Merch" --merch` · `--kind game` · `--kind music` |
+| Create another kind | `npm run sb -- project add "Merch" --merch` · `--kind game` · `--kind music` · `--kind character` |
 | Create inside a different workspace | add `--workspace "Roaring Pines"` to `project add` |
 | Switch the current project (sets the workspace too) | `npm run sb -- project use "Q3 Social"` |
 | Rename a project | `npm run sb -- project rename 2 "New name"` |
@@ -228,15 +275,23 @@ npm run sb -- animate 2 --turbo                  # 8-step turbo LoRA (fast draft
 
 `--image`, `--media`, and `media add` accept a **local file path or an http(s) URL**
 (URLs are downloaded, then uploaded to Supabase Storage). When the user wants media you
-just generated (e.g. via an image/video-gen MCP) saved:
+just generated (e.g. via an image/video/audio-gen MCP) saved:
 1. If you have a URL for it, pass the URL directly.
 2. Otherwise download/save it locally first, then pass the path.
 
 Notes: `--media` repeats for multiple items and works on **every kind** of
-project. `--image` is storyboard-only — it sets the scene's single hero still,
+project, and takes images, video, and audio (mp3/wav/flac/m4a/aac/ogg) alike.
+`--image` is storyboard-only — it sets the scene's single hero still,
 and a storyboard scene can carry `--media` clips and extra frames alongside it
 (the CLI errors helpfully if `--image` is used on another kind, or a video is
-passed to `--image`). Prefer **.mp4 (H.264)** for video; `.mov` often won't play
+passed to `--image`). Every media item can be **downloaded from the app** as
+the original file (a hover button on the thumbnail, a Download button in the
+lightbox), and a storyboard scene's hero still has a Download button in the
+scene editor; the public share page has no
+download button, so point the user at the board itself when they want the
+file. The browser's media picker accepts audio too (it used to drop audio
+files silently, so audio could only be attached via this CLI — no longer).
+Prefer **.mp4 (H.264)** for video; `.mov` often won't play
 in Chrome. Supabase's default per-file cap is ~50MB. `--schedule` is local time
 (`YYYY-MM-DD` or `YYYY-MM-DD HH:MM`); social statuses are
 idea/draft/ready/scheduled/posted; platform aliases normalize (twitter→x,
@@ -268,5 +323,8 @@ Supabase SQL editor (backup first) — each is additive and idempotent:
 `0005_merch_quotes_orders.sql`, `0006_games_music.sql`, `0007_workspaces.sql`
 (`workspaces`, `projects.workspace_id`), `0008_realtime_publication.sql` (live
 updates), `0009_workspace_required.sql` (`workspace_id` NOT NULL — only after
-the app and CLI that send it are live). Errors naming `workspaces` or
-`workspace_id` mean 0007 hasn't run; `kind`/`share_token`/`scene_media` mean 0002.
+the app and CLI that send it are live), `0010_characters.sql` (the `character`
+kind + the `design`/`approved`/`locked` stages). Errors naming `workspaces` or
+`workspace_id` mean 0007 hasn't run; `kind`/`share_token`/`scene_media` mean
+0002; a CHECK violation naming `character`, `design`, `approved`, or `locked`
+means 0010.

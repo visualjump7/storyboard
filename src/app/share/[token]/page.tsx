@@ -10,6 +10,7 @@ const SHARE_KIND_LABELS: Record<ProjectKind, string> = {
   merchandise: 'Merchandise',
   game: 'Games',
   music: 'Music',
+  character: 'Characters',
 };
 
 // Token lookup + fresh signed URLs on every request.

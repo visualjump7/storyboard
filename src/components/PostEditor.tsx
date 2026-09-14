@@ -8,6 +8,7 @@ import { isoToLocalDateInput, isoToLocalTimeInput, localInputsToIso } from '@/li
 import { PLATFORMS, STATUS_META } from './PostBadges';
 import { ChevronDown, ChevronRight, Trash } from './icons';
 import { MediaStrip } from './MediaStrip';
+import { useDialog } from './Dialog';
 
 type PostForm = {
   name: string;
@@ -55,6 +56,7 @@ export function PostEditor({
   }));
   const [dirty, setDirty] = useState(false);
   const [promptOpen, setPromptOpen] = useState(() => post.prompt.trim() !== '');
+  const dialogs = useDialog();
 
   useDebouncedSave(
     form,
@@ -98,6 +100,7 @@ export function PostEditor({
 
   return (
     <div className="flex-1 overflow-y-auto px-[22px] pb-8 pt-5">
+      {dialogs.dialog}
       <MediaStrip
         media={media}
         mediaUrls={mediaUrls}
@@ -238,8 +241,14 @@ export function PostEditor({
 
       <button
         type="button"
-        onClick={() => {
-          if (window.confirm('Delete this post? This cannot be undone.')) onDelete(post);
+        onClick={async () => {
+          const ok = await dialogs.confirm({
+            title: 'Delete this post?',
+            message: 'Its media goes with it. This cannot be undone.',
+            confirmLabel: 'Delete post',
+            danger: true,
+          });
+          if (ok) onDelete(post);
         }}
         className="mt-6 flex h-[34px] items-center gap-[7px] rounded-lg border border-[#34242a] px-[13px] text-[12.5px] text-[#c96a6a] transition-colors hover:border-[#4a2a30] hover:bg-[#251618]"
       >

@@ -32,6 +32,7 @@ import { PipelineToolbar } from './PipelineToolbar';
 import { ScriptPanel } from './ScriptPanel';
 import { ShowcaseCard } from './ShowcaseCard';
 import { ShowcaseDetail } from './ShowcaseDetail';
+import { useDialog } from './Dialog';
 import { Plus } from './icons';
 
 const CARD_CHROME =
@@ -71,6 +72,8 @@ export function ShowcaseCatalog({
   const [mediaMap, setMediaMap] = useState<Record<string, SceneMedia[]>>({});
   const [projects, setProjects] = useState<Project[]>(siblings);
   const [error, setError] = useState<string | null>(null);
+  const dialogs = useDialog();
+  const askConfirm = dialogs.confirm;
   const [detailId, setDetailId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
@@ -233,6 +236,13 @@ export function ShowcaseCatalog({
 
   const handleDelete = useCallback(
     async (item: Scene) => {
+      const ok = await askConfirm({
+        title: `Delete "${item.name || `this ${meta.noun.one}`}"?`,
+        message: 'Its images, video, and audio go with it. This cannot be undone.',
+        confirmLabel: `Delete ${meta.noun.one}`,
+        danger: true,
+      });
+      if (!ok) return;
       const idx = list.findIndex((p) => p.id === item.id);
       const remaining = list.filter((p) => p.id !== item.id);
       if (remaining.length === 0) setDetailId(null);
@@ -254,7 +264,7 @@ export function ShowcaseCatalog({
         fail(e, `Failed to delete ${meta.noun.one}.`);
       }
     },
-    [supabase, list, detailId, meta.noun.one, fail],
+    [supabase, list, detailId, meta.noun.one, fail, askConfirm],
   );
 
   const handleSignOut = useCallback(async () => {
@@ -291,6 +301,7 @@ export function ShowcaseCatalog({
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-canvas font-sans text-ink">
+      {dialogs.dialog}
       <PipelineToolbar
         supabase={supabase}
         userId={userId}
@@ -335,9 +346,7 @@ export function ShowcaseCatalog({
           <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
             <div className="text-[15px] font-semibold text-bright">No {meta.noun.many} yet</div>
             <p className="max-w-xs text-[13px] leading-relaxed text-muted">
-              {kind === 'game'
-                ? 'Add a game — screenshots, a short video, a summary, and a link to play it.'
-                : 'Add a track — cover art, the audio, a summary, and a link to listen.'}
+              {meta.emptyHint}
             </p>
             <button
               type="button"
@@ -384,11 +393,7 @@ export function ShowcaseCatalog({
             projectId={project.id}
             onClose={toggleNotes}
             title="Notes"
-            placeholder={
-              kind === 'game'
-                ? 'Build notes, playtest feedback, store copy…'
-                : 'Release plan, distributor, metadata, credits…'
-            }
+            placeholder={meta.notesPlaceholder}
           />
         )}
       </div>

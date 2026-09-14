@@ -39,6 +39,7 @@ import { MerchRow } from './MerchRow';
 import { PipelineToolbar } from './PipelineToolbar';
 import { Plus } from './icons';
 import { ScriptPanel } from './ScriptPanel';
+import { useDialog } from './Dialog';
 
 type MerchCatalogProps = {
   userId: string;
@@ -73,6 +74,8 @@ export function MerchCatalog({
   const [orderMap, setOrderMap] = useState<Record<string, MerchOrder[]>>({});
   const [projects, setProjects] = useState<Project[]>(siblings);
   const [error, setError] = useState<string | null>(null);
+  const dialogs = useDialog();
+  const askConfirm = dialogs.confirm;
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
@@ -190,12 +193,13 @@ export function MerchCatalog({
 
   const handleDelete = useCallback(
     async (item: Scene) => {
-      if (
-        !window.confirm(
-          `Delete "${item.name || 'this product'}"? Its images, quotes, and orders go with it.`,
-        )
-      )
-        return;
+      const ok = await askConfirm({
+        title: `Delete "${item.name || 'this product'}"?`,
+        message: 'Its images, quotes, and orders go with it. This cannot be undone.',
+        confirmLabel: 'Delete product',
+        danger: true,
+      });
+      if (!ok) return;
       if (expandedId === item.id) setExpandedId(null);
       setItems((prev) => prev?.filter((p) => p.id !== item.id) ?? prev);
       try {
@@ -206,7 +210,7 @@ export function MerchCatalog({
         fail(e, 'Failed to delete product.');
       }
     },
-    [supabase, expandedId, fail],
+    [supabase, expandedId, fail, askConfirm],
   );
 
   // --- media ---
@@ -381,6 +385,7 @@ export function MerchCatalog({
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-canvas font-sans text-ink">
+      {dialogs.dialog}
       <PipelineToolbar
         supabase={supabase}
         userId={userId}

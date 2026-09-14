@@ -2,11 +2,11 @@
 
 A single-user cloud app (Next.js 14 + Supabase). Content is organised in
 exactly two levels: **workspaces** hold **projects**, and projects hold
-**scenes** (or posts / products / games / tracks, depending on the project's
-kind). A workspace is a folder, not a board — it has a name, a description,
-and a position, nothing else, and it is *not* a project kind. Today
-"Phantom Ranch" is one workspace holding five projects; "Roaring Pines" will be
-another.
+**scenes** (or posts / products / games / tracks / characters, depending on the
+project's kind). A workspace is a folder, not a board — it has a name, a
+description, and a position, nothing else, and it is *not* a project kind. Today
+"Phantom Ranch" is one workspace holding all of that show's projects; "Roaring
+Pines" will be another.
 
 **Workspaces organise; they do not restrict.** The site has one shared password
 that signs everyone in as the single owner, so anyone who can log in sees every
@@ -15,7 +15,7 @@ Phantom Ranch projects (and vice versa) in its switcher, its home page, or the
 CLI's scoped resolution. The only *enforced* boundary for outsiders remains the
 per-project `/share/{token}` link.
 
-Each project has a **kind** (five of them):
+Each project has a **kind** (six of them):
 
 - `storyboard` — the original film board: scenes with name, description,
   generation **prompt**, one hero **image** (plus optional media clips
@@ -35,6 +35,23 @@ Each project has a **kind** (five of them):
 - `music` — tracks headed for Spotify: cover art, the audio itself, a summary,
   a listen link, and a stage
   (`demo → recorded → mixed → mastered → submitted → released`).
+- `character` — a **character sheet**: one row per character, with reference
+  **images**, an optional turnaround / short **video**, a voice-reference
+  **audio** clip, a **Profile** (`description`: role, personality, backstory,
+  how they speak), the **Visual DNA** (`prompt`: the generation/look prompt
+  that keeps every render on-model — shown in the editor for this kind only,
+  never on the public share page), a **Reference link** (`link_url`: voice
+  model, design doc, turnaround), and a stage
+  (`concept → design → approved → locked`, labelled Concept / In design /
+  Approved / Locked). No new columns: it reuses the same showcase surface as
+  `game` and `music`.
+
+Every media item on every kind can be **downloaded from the app** as the
+original file: a hover button on its thumbnail in the media strip, and a
+Download button in the lightbox. A storyboard scene's hero still downloads from
+the Download button beside Replace / Remove in the scene editor. Both use a
+short-lived signed URL with an attachment disposition. The public share page
+has no download button.
 
 The browser app is just one client; the **source of truth is Supabase**
 (Postgres `workspaces` + `projects` + `scenes` + `scene_media` + `script` +
@@ -100,8 +117,9 @@ npm run sb -- script get                 # script (storyboard) / notes (social)
 npm run sb -- script set ./notes.md
 ```
 
-- `--kind` is `storyboard` (default), `social`, `merchandise`, `game`, or
-  `music`; `--social` and `--merch` are shorthands.
+- `--kind` is `storyboard` (default), `social`, `merchandise`, `game`, `music`,
+  or `character` (`characters` is accepted as an alias); `--social` and
+  `--merch` are shorthands.
 - `project add` needs a workspace: the current one, `--workspace`, or — if
   exactly one workspace exists — that one. Otherwise it refuses and lists the
   workspaces.
@@ -143,8 +161,9 @@ npm run sb -- media 2 rm 1                # 1-based index from `media` list
 npm run sb -- media 2 order 3,1,2         # full permutation
 ```
 
-Merchandise, games, and music (see `.claude/skills/storyboard/SKILL.md` for
-the research rules):
+Merchandise, games, music, and characters (see
+`.claude/skills/storyboard/SKILL.md` for the research rules and the
+character rules):
 
 ```
 npm run sb -- add --name "Luna Plushie" --desc "12in soft plush" --media ./front.png
@@ -152,7 +171,18 @@ npm run sb -- quote 1 add --supplier "Shenzhen Plush Co" --cost 8.40 --moq 250 -
 npm run sb -- order 1 add --supplier "Shenzhen Plush Co" --qty 500 --cost 8.40 --status placed
 npm run sb -- set 1 --price 29.99 --dev-time "5-7 weeks" --status quotes
 npm run sb -- add --name "Echo Runner" --desc "Endless runner" --link "https://itch.io/…" --status playable
+
+npm run sb -- project add "Cast" --kind character
+npm run sb -- add --name "Lorenzo" --desc "Team medic; deadpan, warm" \
+  --prompt "teen cream retriever, black beanie, headphones round neck, black medic vest with red cross, black cargo trousers, black sneakers" \
+  --link "https://…" --status design --media ./lorenzo-front.png --media ./lorenzo-voice.mp3
 ```
+
+On a character, `--desc` is the Profile, `--prompt` is the Visual DNA, and
+`--link` is the reference link; new characters default to `concept`. `sb list`
+on a character project prints each character's stage and its image / video /
+audio counts (like music), plus the full, untruncated Visual DNA — copy it from
+there verbatim.
 
 - `<workspace>` is a 1-based index from `workspaces`, an exact name
   (case-insensitive), a full UUID, or a unique id prefix. A purely numeric
@@ -179,19 +209,21 @@ npm run sb -- add --name "Echo Runner" --desc "Endless runner" --link "https://i
 - `--image`/`--media` take a **local file path or an http(s) URL** (URLs are
   downloaded then uploaded). `--media` repeats for multiple items and works on
   every kind; storyboard scenes keep their single hero still in `--image` and
-  can carry `--media` clips alongside it. Useful for piping in media you just
-  generated (Higgsfield, Kling, etc.).
+  can carry `--media` clips alongside it. `--media` accepts images, video, and
+  audio (mp3/wav/flac/m4a/aac/ogg — voice references, tracks). Useful for
+  piping in media you just generated (Higgsfield, Kling, etc.).
 - `--schedule` is **local time**, `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`.
 - `--status` is validated against the project's kind: social idea, draft,
   ready, scheduled, posted; merchandise concept, sourcing, quotes, orders,
   ready; game prototype, in_development, playable, released; music demo,
-  recorded, mixed, mastered, submitted, released. Platform names normalize
-  (twitter→x, ig→instagram, …); unknown slugs are stored with a warning.
+  recorded, mixed, mastered, submitted, released; character concept, design,
+  approved, locked. Platform names normalize (twitter→x, ig→instagram, …);
+  unknown slugs are stored with a warning.
 - Videos: prefer **.mp4 (H.264)**; `.mov` often won't play in Chrome. Files over
   ~50MB hit Supabase's default per-file cap (raiseable in Storage → Settings).
 - Kind-specific flags on the wrong kind (`--copy` on a storyboard, `--image` on
-  a social project, `--link` outside game/music) error with guidance — that's
-  the kind gate working, not a bug.
+  a social project, `--link` outside game/music/character) error with
+  guidance — that's the kind gate working, not a bug.
 - `add` places the scene/post at the end of the board (social: end of the
   **backlog**; scheduled posts display grouped by date in the app).
 
@@ -206,7 +238,7 @@ workspace's numbered list — surface that to the user and ask which one rather
 than guessing. If the same project name exists in two workspaces, use a
 qualified ref (`"Phantom Ranch/Merchandise"`) or ask — never guess. Social
 content belongs in `social` projects; film scenes in `storyboard` projects;
-products, games, and tracks in their own kinds.
+products, games, tracks, and characters in their own kinds.
 
 ### When `sb` reports it's not configured
 
@@ -236,18 +268,25 @@ SQL editor (backup first); each is additive and idempotent:
 9. `0009_workspace_required.sql` — `projects.workspace_id` NOT NULL. Run ONLY
    after the web build and CLI that always send it are live; it halts loudly if
    any project is still unfiled rather than guessing a workspace for it.
+10. `0010_characters.sql` — the `character` kind; `scenes.status` gains
+    `design`, `approved`, `locked` (`concept` was already there, shared with
+    merchandise)
 
 Errors about `kind`, `share_token`, or `scene_media` point at 0002; errors
-about `workspaces` or `workspace_id` point at 0007.
+about `workspaces` or `workspace_id` point at 0007; a CHECK violation naming
+`character`, `design`, `approved`, or `locked` points at 0010.
 
 ## App architecture (for reference)
 
 - `src/lib/types.ts` — `Workspace`, `Project` (with `kind`, `workspace_id`
   — `string | null` until a later migration makes it NOT NULL — `order_index`,
   `share_token`), `Scene` (post fields: `copy`, `status`, `scheduled_at`,
-  `platforms`; `link_url` for game/music; `sale_price`/`dev_time` for
-  merchandise), `SceneMedia`, `ScriptRow`, `KIND_LABELS`, `POST_STATUSES` and
-  the merch/game/music status lists, `SCENE_IMAGES_BUCKET`.
+  `platforms`; `link_url` for game/music/character; `sale_price`/`dev_time`
+  for merchandise; a character's Visual DNA is the ordinary `prompt`),
+  `SceneMedia`, `ScriptRow`, `KIND_LABELS`, `POST_STATUSES` and the
+  merch/game/music/character status lists, `SHOWCASE_META` (per-kind labels,
+  placeholders, and stages for the showcase surface — `promptLabel` is set
+  only for `character`), `SCENE_IMAGES_BUCKET`.
 - `src/lib/workspaces.ts` — `fetchWorkspaces` / `fetchWorkspace` /
   `createWorkspace` / `renameWorkspace` / `countWorkspaceProjects` /
   `deleteWorkspace` (refuses while the workspace still holds projects).
@@ -261,7 +300,9 @@ about `workspaces` or `workspace_id` point at 0007.
 - `src/lib/posts.ts` / `media.ts` / `pipeline.ts` — post field updates,
   scene_media CRUD, and backlog/schedule grouping + date helpers.
 - `src/lib/storage.ts` — upload + signed-URL helpers (image, video, and audio
-  mimes). The `sb` CLI mirrors these server-side with the service-role key.
+  mimes); `signImageDownloadUrl` mints a short-lived signed URL with an
+  attachment disposition for the in-app Download buttons. The `sb` CLI
+  mirrors these server-side with the service-role key.
 - `src/lib/supabase/admin.ts` — server-only service-role client. It runs in
   exactly two places in the deployed app: `src/lib/share.ts` (share-token data
   fetch for `/share/[token]`) and `src/app/login/actions.ts` (the shared
@@ -271,10 +312,12 @@ about `workspaces` or `workspace_id` point at 0007.
   project count + kind chips; New/Rename/Delete workspace; an "Unfiled" list
   with a "File under…" select for projects whose `workspace_id` is null).
   `src/app/w/[workspaceId]/page.tsx` → `ProjectsHome` scoped to one workspace
-  (New project creates inside it; each card has Move to… another workspace /
-  Rename / Delete). `src/app/p/[projectId]/page.tsx` branches on
+  (New project asks for a name, then creates inside it; each card has Move to…
+  another workspace / Rename / Delete). `src/app/p/[projectId]/page.tsx` branches on
   `project.kind`: `Storyboard` (original, untouched), `PostPipeline`,
-  `MerchCatalog`, `ShowcaseCatalog` (game + music). Board toolbars show a
+  `MerchCatalog`, `ShowcaseCatalog` (game + music + character; its
+  `ShowcaseDetail` renders the Visual DNA prompt field only when the kind's
+  `SHOWCASE_META` has a `promptLabel`, i.e. for character). Board toolbars show a
   breadcrumb S › Workspace › Project; `ProjectSwitcher` lists ONLY siblings in
   the same workspace, plus "New project in <Workspace>", "All <Workspace>
   projects" (→ `/w/{id}`), a "Switch workspace" section linking to each other
@@ -283,13 +326,26 @@ about `workspaces` or `workspace_id` point at 0007.
 - Pipeline UI: `PostPipeline` (state owner) → `PipelineToolbar` (Add post,
   Notes, Share-link copy), `PipelineBoard` (draggable Backlog + date-grouped
   Scheduled), `PostCardView`, `PostDetail`/`PostEditor` (copy, platforms,
-  status, schedule, collapsed generation prompt), `MediaStrip` (multi-upload,
-  reorder, lightbox), `VideoThumb`, `PostBadges` (status/platform chips).
+  status, schedule, collapsed generation prompt), `MediaStrip` (multi-upload
+  of images / video / audio — the picker used to accept only image/ and video/
+  MIME types, so it silently dropped every audio file; it now accepts audio/
+  too and falls back to the extension (mp3/wav/flac/m4a/aac/ogg) for audio the
+  browser reports with no MIME type — reorder, lightbox, and a per-item
+  Download of the original on the thumbnail hover and in the lightbox, with an
+  inline error if signing fails; shared by every kind that has media),
+  `VideoThumb`, `PostBadges` (status/platform chips). `PostCardView` picks
+  the first image or video as a post's cover, never an audio item.
+- `src/components/Dialog.tsx` — `useDialog()`, the in-app prompt / confirm used
+  for every create-name, rename, move, and delete confirmation. Never use
+  `window.prompt` / `window.confirm`: embedded browsers (the desktop app's
+  preview pane) throw "prompt() is not supported", which once made Rename and
+  New workspace silently do nothing. The dialog portals to `<body>`.
 - `src/app/share/[token]/page.tsx` + `ShareView` — public read-only review
-  (full copy, media carousels, playable video; noindex). `src/middleware.ts`
+  (full copy, media carousels, playable video, and audio players — audio never
+  enters a carousel; noindex). `src/middleware.ts`
   exempts `/share/*` from auth.
 - `supabase/schema.sql` — full current schema for a FRESH project.
-  `supabase/migrations/0001` … `0009` upgrade an EXISTING DB in order (list
+  `supabase/migrations/0001` … `0010` upgrade an EXISTING DB in order (list
   above). Run in the SQL editor with a backup first. `projects.workspace_id`
   is nullable in 0007 and is tightened to NOT NULL by 0009 once every client
   sends it. The FK is ON DELETE NO ACTION: deleting a workspace

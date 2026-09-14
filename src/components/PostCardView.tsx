@@ -23,7 +23,8 @@ type PostCardViewProps = {
 export function PostCardView({ post, media, mediaUrls, showTime }: PostCardViewProps) {
   const name = post.name || 'Untitled post';
   const copyPreview = post.copy || 'No copy yet';
-  const first = media?.[0];
+  // Cover = the first image or video; audio can't be drawn as a cover.
+  const first = media?.find((m) => m.kind !== 'audio') ?? media?.[0];
   const firstUrl = first ? mediaUrls[first.path] : undefined;
   const time = showTime && post.scheduled_at ? formatScheduleTime(post.scheduled_at) : '';
 
@@ -47,6 +48,13 @@ export function PostCardView({ post, media, mediaUrls, showTime }: PostCardViewP
               <Play size={11} />
             </div>
           </>
+        )}
+
+        {first && first.kind === 'audio' && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-[#6a6a74]">
+            <Play size={20} />
+            <span className="text-[10px] uppercase tracking-wide">Audio</span>
+          </div>
         )}
 
         <div className="absolute left-[9px] top-[9px]">

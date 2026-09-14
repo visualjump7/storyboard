@@ -38,7 +38,7 @@ export function ShareView({ kind, scenes, urls }: ShareViewProps) {
   }
   if (kind === 'social') return <SocialShare scenes={scenes} urls={urls} />;
   if (kind === 'merchandise') return <MerchShare scenes={scenes} urls={urls} />;
-  if (kind === 'game' || kind === 'music') {
+  if (kind === 'game' || kind === 'music' || kind === 'character') {
     return <ShowcaseShare kind={kind} scenes={scenes} urls={urls} />;
   }
   return <StoryboardShare scenes={scenes} urls={urls} />;
@@ -62,8 +62,7 @@ function ShowcaseShare({
     <div className="mx-auto max-w-[1180px] px-[26px] pb-24 pt-8">
       <div className="flex flex-wrap content-start gap-[22px]">
         {scenes.map((item) => {
-          const audio = item.media.filter((m) => m.kind === 'audio');
-          const visual = item.media.filter((m) => m.kind !== 'audio');
+          const { visual, audio } = splitAudio(item.media);
           const link = item.link_url?.trim() ?? '';
           const linkIsHttp = /^https?:\/\//i.test(link);
           return (
@@ -101,18 +100,7 @@ function ShowcaseShare({
                     {item.description}
                   </p>
                 )}
-                {audio.map((track) =>
-                  urls[track.path] ? (
-                    // eslint-disable-next-line jsx-a11y/media-has-caption
-                    <audio
-                      key={track.id}
-                      controls
-                      preload="metadata"
-                      src={urls[track.path]}
-                      className="mt-3 w-full"
-                    />
-                  ) : null,
-                )}
+                <AudioPlayers media={audio} urls={urls} />
                 {link && linkIsHttp && (
                   <a
                     href={link}
@@ -274,12 +262,21 @@ function ShareCard({
   showTime?: boolean;
 }) {
   const time = showTime && post.scheduled_at ? formatScheduleTime(post.scheduled_at) : '';
+  // The carousel draws only images and video; audio gets its own players.
+  const { visual, audio } = splitAudio(post.media);
+  const audioOnly = visual.length === 0 && audio.length > 0;
+  const badge = <StatusBadge status={post.status} />;
   return (
     <div className="w-[340px] max-w-full flex-none overflow-hidden rounded-xl border border-line bg-card shadow-card">
-      <MediaCarousel media={post.media} urls={urls} alt={post.name || 'Post media'} statusBadge={<StatusBadge status={post.status} />} />
+      {!audioOnly && (
+        <MediaCarousel media={visual} urls={urls} alt={post.name || 'Post media'} statusBadge={badge} />
+      )}
       <div className="px-4 pb-4 pt-3">
-        <div className="text-[14.5px] font-semibold tracking-[-0.01em] text-bright">
-          {post.name || 'Untitled post'}
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1 text-[14.5px] font-semibold tracking-[-0.01em] text-bright">
+            {post.name || 'Untitled post'}
+          </div>
+          {audioOnly && <div className="flex-none">{badge}</div>}
         </div>
         {post.copy ? (
           <p className="mt-2 whitespace-pre-wrap text-[13px] leading-[1.6] text-[#cfcfd4]">
@@ -288,6 +285,7 @@ function ShareCard({
         ) : (
           <p className="mt-2 text-[12.5px] italic text-muted">No copy yet</p>
         )}
+        <AudioPlayers media={audio} urls={urls} />
         {(post.platforms.length > 0 || time) && (
           <div className="mt-3 flex items-center justify-between gap-2">
             <PlatformChips platforms={post.platforms} />
@@ -296,6 +294,33 @@ function ShareCard({
         )}
       </div>
     </div>
+  );
+}
+
+/** The carousel can only draw images and video; audio is split out for players. */
+function splitAudio(media: SharedMedia[]) {
+  return {
+    visual: media.filter((m) => m.kind !== 'audio'),
+    audio: media.filter((m) => m.kind === 'audio'),
+  };
+}
+
+function AudioPlayers({ media, urls }: { media: SharedMedia[]; urls: Record<string, string> }) {
+  return (
+    <>
+      {media.map((track) =>
+        urls[track.path] ? (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <audio
+            key={track.id}
+            controls
+            preload="metadata"
+            src={urls[track.path]}
+            className="mt-3 w-full"
+          />
+        ) : null,
+      )}
+    </>
   );
 }
 
@@ -415,8 +440,10 @@ function StoryboardShare({
         {scenes.map((scene, i) => {
           const url = scene.image_path ? urls[scene.image_path] : undefined;
           // A scene can carry rendered clips/extra frames in scene_media
-          // alongside its single hero still. When it does, the carousel plays
-          // them; the still stays the fallback for scenes without any.
+          // alongside its single hero still. When it has images or video, the
+          // carousel plays them; otherwise the still shows. Audio never enters
+          // the carousel (it can't be drawn) — it gets players below the text.
+          const { visual, audio } = splitAudio(scene.media);
           const badge = (
             <div className="flex h-[22px] items-center rounded-md bg-accent px-[9px] text-[11.5px] font-semibold tracking-[0.01em] text-canvas shadow-badge">
               Scene {i + 1}
@@ -427,9 +454,9 @@ function StoryboardShare({
               key={scene.id}
               className="w-[300px] max-w-full flex-none overflow-hidden rounded-xl border border-line bg-card shadow-card"
             >
-              {scene.media.length > 0 ? (
+              {visual.length > 0 ? (
                 <MediaCarousel
-                  media={scene.media}
+                  media={visual}
                   urls={urls}
                   alt={scene.name || `Scene ${i + 1}`}
                   statusBadge={badge}
@@ -461,6 +488,7 @@ function StoryboardShare({
                     {scene.description}
                   </div>
                 )}
+                <AudioPlayers media={audio} urls={urls} />
               </div>
             </div>
           );

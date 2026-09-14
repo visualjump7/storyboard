@@ -6,12 +6,14 @@
 // and media into the app from any machine that has this repo + a .env.local.
 //
 // Workspaces hold projects; projects hold scenes. Exactly one level — a
-// workspace is NOT a project kind. Projects come in five kinds: 'storyboard'
+// workspace is NOT a project kind. Projects come in six kinds: 'storyboard'
 // (film scene boards — the original), 'social' (post pipelines: copy +
 // multiple images/videos + schedule + status + platforms), 'merchandise'
 // (product tracking: images + supplier quotes/orders + price + dev time +
-// stage), 'game' and 'music' (showcase boards: media + summary + link +
-// stage). Kind-specific flags error on the wrong kind rather than writing a
+// stage), and the showcase kinds 'game', 'music' and 'character' (media +
+// summary + link + stage; a character sheet also carries its visual-DNA
+// prompt and a voice-reference audio clip). Kind-specific flags error on the
+// wrong kind rather than writing a
 // column that board never shows.
 //
 // Usage:
@@ -74,7 +76,7 @@
 //   resolved WITHIN the current (or --workspace) workspace only; a full UUID or unique id
 //   prefix is global; "Workspace/Project" (either side a name or index) is global too.
 // <scene>/<post> = 1-based index from `list`, a full UUID, or an id prefix.
-// --kind is one of storyboard (default), social, merchandise, game, music.
+// --kind is one of storyboard (default), social, merchandise, game, music, character.
 // --workspace <workspace> scopes one run to a workspace without changing the current one;
 //   --project <project> does the same for a scene command.
 // --image/--media accept a local file path OR an http(s) URL (downloaded then uploaded).
@@ -873,6 +875,10 @@ const MERCH_STATUSES = ['concept', 'sourcing', 'quotes', 'orders', 'ready'];
 const ORDER_STATUSES = ['placed', 'in_production', 'shipped', 'received', 'cancelled'];
 const GAME_STATUSES = ['prototype', 'in_development', 'playable', 'released'];
 const MUSIC_STATUSES = ['demo', 'recorded', 'mixed', 'mastered', 'submitted', 'released'];
+const CHARACTER_STATUSES = ['concept', 'design', 'approved', 'locked'];
+// game, music, and character share the showcase surface (media + summary + link + stage).
+const SHOWCASE_KINDS = ['game', 'music', 'character'];
+const SHOWCASE_FIRST_STAGE = { game: 'prototype', music: 'demo', character: 'concept' };
 
 const KNOWN_PLATFORMS = [
   'linkedin',
@@ -898,6 +904,7 @@ function parseStatusFlag(value, kind = 'social') {
     kind === 'merchandise' ? MERCH_STATUSES
     : kind === 'game' ? GAME_STATUSES
     : kind === 'music' ? MUSIC_STATUSES
+    : kind === 'character' ? CHARACTER_STATUSES
     : STATUSES;
   const v = String(value).toLowerCase().trim();
   if (!allowed.includes(v)) {
@@ -1045,6 +1052,7 @@ function rowNoun(kind) {
   if (kind === 'merchandise') return 'item';
   if (kind === 'game') return 'game';
   if (kind === 'music') return 'track';
+  if (kind === 'character') return 'character';
   return 'scene';
 }
 
@@ -1066,13 +1074,14 @@ function assertSocial(project, what) {
   }
 }
 
-/** game and music share the showcase surface (media + summary + link + stage). */
+/** game, music, and character share the showcase surface (media + summary + link + stage). */
 function assertShowcase(project, what) {
   const kind = projectKind(project);
-  if (kind !== 'game' && kind !== 'music') {
+  if (!SHOWCASE_KINDS.includes(kind)) {
     throw new Error(
-      `"${qualifiedName(project)}" is a ${kind} project — ${what} only applies to game or ` +
-        'music projects. Create one with:  sb project add "Name" --kind game',
+      `"${qualifiedName(project)}" is a ${kind} project — ${what} only applies to ` +
+        `${SHOWCASE_KINDS.slice(0, -1).join(', ')}, or ${SHOWCASE_KINDS.at(-1)} projects. ` +
+        'Create one with:  sb project add "Name" --kind character   (or --kind game, --kind music)',
     );
   }
 }
@@ -1336,9 +1345,10 @@ async function cmdProject(positional, flags) {
       kind = flags.kind.toLowerCase().trim();
       if (kind === 'merch') kind = 'merchandise';
       if (kind === 'games') kind = 'game';
-      if (!['storyboard', 'social', 'merchandise', 'game', 'music'].includes(kind)) {
+      if (kind === 'characters') kind = 'character';
+      if (!['storyboard', 'social', 'merchandise', 'game', 'music', 'character'].includes(kind)) {
         throw new Error(
-          `Invalid --kind "${flags.kind}". Use storyboard, social, merchandise, game, or music.`,
+          `Invalid --kind "${flags.kind}". Use storyboard, social, merchandise, game, music, or character.`,
         );
       }
     }
@@ -1433,7 +1443,7 @@ async function cmdList(flags) {
   const scenes = await orderedScenes(project.id);
 
   const listKind = projectKind(project);
-  if (listKind === 'game' || listKind === 'music') {
+  if (SHOWCASE_KINDS.includes(listKind)) {
     const noun = rowNoun(listKind);
     if (scenes.length === 0) {
       console.log(`No ${noun}s yet. Add one with: npm run sb -- add --name "Title"`);
@@ -1457,10 +1467,13 @@ async function cmdList(flags) {
       const c = counts[s.id] ?? { image: 0, video: 0, audio: 0 };
       console.log(`${num}. ${name}  ${s.id.slice(0, 8)}`);
       const parts = [`stage: ${s.status}`, `images: ${c.image}`, `video: ${c.video}`];
-      if (listKind === 'music') parts.push(`audio: ${c.audio}`);
+      if (listKind === 'music' || listKind === 'character') parts.push(`audio: ${c.audio}`);
       console.log(`      ${parts.join(' · ')}`);
       if (s.link_url) console.log(`      link: ${truncate(s.link_url, 80)}`);
       if (s.description) console.log(`      summary: ${truncate(s.description, 90)}`);
+      // A character's Visual DNA is printed in full: it gets pasted verbatim
+      // into render prompts, so a truncated copy would drift off-model.
+      if (listKind === 'character' && s.prompt) console.log(`      visual DNA: ${s.prompt}`);
     });
     return;
   }
@@ -1615,8 +1628,8 @@ async function cmdAdd(flags) {
   if (typeof flags.price === 'string') row.sale_price = parseMoneyFlag(flags.price, '--price');
   if (typeof flags['dev-time'] === 'string') row.dev_time = flags['dev-time'];
   if (typeof flags.link === 'string') row.link_url = flags.link.trim();
-  if ((kind === 'game' || kind === 'music') && row.status === undefined) {
-    row.status = kind === 'game' ? 'prototype' : 'demo';
+  if (SHOWCASE_KINDS.includes(kind) && row.status === undefined) {
+    row.status = SHOWCASE_FIRST_STAGE[kind];
   }
   // New merchandise rows start at the board's first stage, not the column
   // default 'draft' (a social stage), so they don't land off-board.
@@ -1707,7 +1720,9 @@ async function cmdSet(positional, flags) {
         ? 'Nothing to update. Pass --name, --desc, --status, --price, and/or --dev-time.'
         : isSocial
           ? 'Nothing to update. Pass --name, --desc, --prompt, --copy, --status, --schedule, and/or --platforms.'
-          : 'Nothing to update. Pass --name, --desc, and/or --prompt.',
+          : SHOWCASE_KINDS.includes(kind)
+            ? 'Nothing to update. Pass --name, --desc, --prompt, --link, and/or --status.'
+            : 'Nothing to update. Pass --name, --desc, and/or --prompt.',
     );
   }
   patch.updated_at = new Date().toISOString();
@@ -2398,7 +2413,7 @@ function printHelp() {
   console.log(
     [
       'sb — Storyboard agent CLI (workspaces › projects: storyboards, social',
-      'pipelines, merchandise boards, game + music showcases)',
+      'pipelines, merchandise boards, game / music / character showcases)',
       '',
       'Usage: npm run sb -- <command> [args]',
       '',
@@ -2460,7 +2475,8 @@ function printHelp() {
       '  prefix is global; "Workspace/Project" (either side a name or index) is global.',
       '  A name that exists in several workspaces must be qualified.',
       '<scene>/<post> = 1-based index from `list`, a full UUID, or an id prefix.',
-      '--kind is one of: storyboard (default), social, merchandise, game, music.',
+      '--kind is one of: storyboard (default), social, merchandise, game, music, character.',
+      `--status (character) is one of: ${CHARACTER_STATUSES.join(', ')}; --prompt holds the visual DNA.`,
       '--workspace <workspace> scopes one run without changing the current workspace;',
       '  --project <project> scopes a scene command to a project for one run.',
       '--image/--media accept a local file path or an http(s) URL. --media repeats.',

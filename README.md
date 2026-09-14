@@ -2,12 +2,14 @@
 
 A cloud, dark-themed planning app. Content sits in **workspaces** (one per
 production — e.g. Phantom Ranch, Roaring Pines), each holding **projects**.
-A project is one of five kinds: a **film storyboard** — a visual scene
+A project is one of six kinds: a **film storyboard** — a visual scene
 organizer (think Adobe Bridge) with a script editor; a **social-post
 pipeline** — posts with copy, multiple images/video, a posting schedule,
 statuses, and target platforms; a **merchandise** board — products with
-supplier quotes and orders; a **games** showcase; or a **music** showcase —
-each with a public read-only **share link** for team review. Single user,
+supplier quotes and orders; a **games** showcase; a **music** showcase; or a
+**characters** sheet — reference images, a voice reference, and the visual-DNA
+prompt that keeps every render on-model — each with a public read-only
+**share link** for team review. Single user,
 private behind one shared password, reachable from any computer via a deployed
 URL. Nothing publishes to social networks from here; it's the planning and
 review surface.
@@ -138,6 +140,9 @@ the deployed app keeps working while they run:
 9. `supabase/migrations/0009_workspace_required.sql` — `projects.workspace_id`
    NOT NULL. Deploy the app and update the CLI first; it halts if any project
    is still unfiled instead of guessing where it belongs.
+10. `supabase/migrations/0010_characters.sql` — the `character` kind and its
+    stages (`design`, `approved`, `locked`; `concept` already existed, shared
+    with merchandise). No new columns or tables.
 
 Videos share the `scene-images` bucket. Supabase's default per-file upload cap
 is 50MB — raise it under **Storage → Settings** if you need larger clips.
@@ -154,7 +159,7 @@ is 50MB — raise it under **Storage → Settings** if you need larger clips.
   creation order): create a project inside it, rename, delete, or move a
   project to another workspace.
 - `/p/{projectId}` — **one board/pipeline** (storyboard, social, merchandise,
-  games, or music by the project's kind). Unchanged by the workspace layer —
+  games, music, or characters by the project's kind). Unchanged by the workspace layer —
   every existing URL keeps working. The toolbar breadcrumb reads
   S › Workspace › Project, and the project switcher lists that workspace's
   other projects.
@@ -219,6 +224,19 @@ is 50MB — raise it under **Storage → Settings** if you need larger clips.
 - **Projects** — ordered within their workspace; a project can be moved to
   another workspace without changing its URL, share link, or stored media.
   The `sb` CLI (`scripts/sb.mjs`, see `CLAUDE.md`) mirrors all of this.
+- **Characters** — a character-sheet kind on the same showcase surface as
+  games and music (card grid + detail slide-over). Each character carries
+  reference images, an optional turnaround video, a voice-reference audio
+  clip, a Profile, a Reference link, a stage (Concept → In design → Approved →
+  Locked), and a **Visual DNA** prompt — the generation prompt that keeps every
+  render on-model, shown in the editor only and never on the share page.
+- **Media download** — every media item on every kind has a hover Download
+  button on its thumbnail and a Download button in the lightbox; a storyboard
+  scene's hero still has its own Download button in the scene editor. Both
+  serve the original file through a short-lived signed URL with an attachment
+  disposition. The media picker accepts images, video, and audio; for audio
+  the browser reports with no MIME type it falls back to the file extension
+  (mp3/wav/flac/m4a/aac/ogg).
 - **Grid** — scene cards wrap across the canvas; a toolbar **size slider** scales
   them Adobe-Bridge style (size remembered in `localStorage`). Each card shows
   the cover-fit thumbnail (or a clean placeholder), a `Scene N` badge, name, and
@@ -243,14 +261,17 @@ Exactly two levels of nesting: workspaces hold projects; projects hold scenes.
   `created_at`, `updated_at`.
 - `projects`: `id`, `user_id`, `workspace_id` (→ `workspaces`, `ON DELETE NO
   ACTION`), `order_index` (position within its workspace), `name`, `kind`
-  (`storyboard` | `social` | `merchandise` | `game` | `music`), `share_token`
-  (unguessable, backs `/share/{token}`), `created_at`, `updated_at`.
-- `scenes` (one row per scene / post / product / game / track): `id`,
-  `user_id`, `project_id`, `order_index`, `name`, `description`, `prompt`,
-  `image_path` (nullable; the storyboard hero still), post fields `copy`,
-  `status`, `scheduled_at`, `platforms`, merchandise fields `sale_price`,
-  `dev_time`, showcase `link_url`, `created_at`, `updated_at`. `status` is one
-  shared column whose CHECK is the union of every kind's stages.
+  (`storyboard` | `social` | `merchandise` | `game` | `music` | `character`),
+  `share_token` (unguessable, backs `/share/{token}`), `created_at`,
+  `updated_at`.
+- `scenes` (one row per scene / post / product / game / track / character):
+  `id`, `user_id`, `project_id`, `order_index`, `name`, `description`,
+  `prompt` (the generation prompt; a character's Visual DNA), `image_path`
+  (nullable; the storyboard hero still), post fields `copy`, `status`,
+  `scheduled_at`, `platforms`, merchandise fields `sale_price`, `dev_time`,
+  showcase `link_url` (game / music / character), `created_at`, `updated_at`.
+  `status` is one shared column whose CHECK is the union of every kind's
+  stages.
 - `scene_media`: ordered images/videos/audio attached to a scene — `id`,
   `user_id`, `scene_id`, `kind` (`image` | `video` | `audio`), `path`,
   `position`, `created_at`.

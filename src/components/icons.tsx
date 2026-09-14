@@ -166,6 +166,15 @@ export function Note({ size = 15, className }: IconProps) {
   );
 }
 
+export function Person({ size = 15, className }: IconProps) {
+  return (
+    <Stroke size={size} className={className}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </Stroke>
+  );
+}
+
 export function Folder({ size = 15, className }: IconProps) {
   return (
     <Stroke size={size} className={className}>

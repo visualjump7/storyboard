@@ -6,8 +6,7 @@ import {
   SHOWCASE_META,
   SHOWCASE_STATUS_LABELS,
   asShowcaseStatus,
-  type GameStatus,
-  type MusicStatus,
+  type ShowcaseStatus,
   type Scene,
   type SceneMedia,
   type ShowcaseFields,
@@ -38,8 +37,10 @@ type ShowcaseDetailProps = {
 type ShowcaseForm = {
   name: string;
   description: string;
-  status: GameStatus | MusicStatus;
+  status: ShowcaseStatus;
   link_url: string;
+  /** Visual DNA — only rendered and saved when the kind's meta has promptLabel. */
+  prompt: string;
 };
 
 export function ShowcaseDetail({
@@ -160,6 +161,7 @@ function ShowcaseEditor({
     description: item.description,
     status: asShowcaseStatus(kind, item.status),
     link_url: item.link_url ?? '',
+    prompt: item.prompt ?? '',
   });
   const [dirty, setDirty] = useState(false);
 
@@ -171,6 +173,8 @@ function ShowcaseEditor({
         description: value.description,
         status: value.status,
         link_url: value.link_url.trim(),
+        // Kinds without a prompt field never touch the column.
+        ...(meta.promptLabel ? { prompt: value.prompt } : {}),
       });
     },
     400,
@@ -197,6 +201,7 @@ function ShowcaseEditor({
         onAddFiles={(files) => onAddMedia(item, files)}
         onRemove={(m) => onRemoveMedia(item, m)}
         onReorder={(ordered) => onReorderMedia(item, ordered)}
+        downloadName={form.name || meta.noun.one}
       />
 
       {audio.length > 0 && (
@@ -210,27 +215,40 @@ function ShowcaseEditor({
         </div>
       )}
 
-      <Field label={`${meta.noun.one === 'track' ? 'Track' : 'Game'} name`} className="mt-[22px]">
+      <Field label={meta.itemLabel} className="mt-[22px]">
         <input
           value={form.name}
           onChange={(e) => update('name', e.target.value)}
-          placeholder={meta.noun.one === 'track' ? 'Track title' : 'Game title'}
+          placeholder={meta.itemPlaceholder}
           className={INPUT}
         />
       </Field>
 
-      <Field label="Summary" className="mt-[18px]">
+      <Field label={meta.summaryLabel} className="mt-[18px]">
         <textarea
           value={form.description}
           onChange={(e) => update('description', e.target.value)}
-          placeholder={
-            meta.noun.one === 'track'
-              ? 'Mood, instrumentation, who it’s for, release notes…'
-              : 'What the game is, how it plays, what’s in this build…'
-          }
+          placeholder={meta.summaryPlaceholder}
           className="min-h-[140px] w-full resize-y rounded-[9px] border border-line-2 bg-field px-3.5 py-3 text-[13.5px] leading-[1.6] text-[#d6d6db] outline-none transition-colors focus:border-accent"
         />
       </Field>
+
+      {meta.promptLabel && (
+        <div className="mt-[18px]">
+          <div className="mb-2 flex items-center gap-[7px]">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-muted">
+              {meta.promptLabel}
+            </span>
+            <span className="text-[10.5px] text-[#52525a]">generation prompt — paste into any renderer</span>
+          </div>
+          <textarea
+            value={form.prompt}
+            onChange={(e) => update('prompt', e.target.value)}
+            placeholder={meta.promptPlaceholder}
+            className="min-h-[120px] w-full resize-y rounded-[9px] border border-line-2 bg-field px-3.5 py-3 font-mono text-[12.5px] leading-[1.6] text-[#d6d6db] outline-none transition-colors focus:border-accent"
+          />
+        </div>
+      )}
 
       <Field label={meta.linkLabel} className="mt-[18px]">
         <input
@@ -255,7 +273,7 @@ function ShowcaseEditor({
       <Field label="Stage" className="mt-[18px]">
         <select
           value={form.status}
-          onChange={(e) => update('status', e.target.value as GameStatus | MusicStatus)}
+          onChange={(e) => update('status', e.target.value as ShowcaseStatus)}
           className={`${INPUT} cursor-pointer`}
         >
           {meta.statuses.map((s) => (

@@ -8,6 +8,7 @@ import { moveProject } from '@/lib/projects';
 import { createWorkspace, deleteWorkspace, renameWorkspace } from '@/lib/workspaces';
 import { KIND_LABELS, type ProjectKind, type Workspace } from '@/lib/types';
 import { Camera, Folder, Pencil, Plus, SignOut, Trash } from './icons';
+import { useDialog } from './Dialog';
 
 /** The slice of a project the index needs — counts, chips, and the unfiled list. */
 export type ProjectSummary = {
@@ -39,6 +40,7 @@ export function WorkspacesHome({ userId, initialWorkspaces, projects }: Workspac
   useEffect(() => setWorkspaces(initialWorkspaces), [initialWorkspaces]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogs = useDialog();
 
   const byWorkspace = useMemo(() => {
     const map: Record<string, ProjectSummary[]> = {};
@@ -50,7 +52,11 @@ export function WorkspacesHome({ userId, initialWorkspaces, projects }: Workspac
   const unfiled = useMemo(() => projects.filter((p) => !p.workspace_id), [projects]);
 
   async function handleNew() {
-    const name = window.prompt('New workspace name', '');
+    const name = await dialogs.prompt({
+      title: 'New workspace',
+      placeholder: 'e.g. Roaring Pines',
+      confirmLabel: 'Create',
+    });
     if (name == null) return;
     setBusy(true);
     setError(null);
@@ -64,7 +70,11 @@ export function WorkspacesHome({ userId, initialWorkspaces, projects }: Workspac
   }
 
   async function handleRename(w: Workspace) {
-    const name = window.prompt('Rename workspace', w.name);
+    const name = await dialogs.prompt({
+      title: 'Rename workspace',
+      initial: w.name,
+      confirmLabel: 'Rename',
+    });
     if (name == null) return;
     const next = name.trim() || w.name;
     setWorkspaces((prev) => prev.map((x) => (x.id === w.id ? { ...x, name: next } : x)));
@@ -84,7 +94,12 @@ export function WorkspacesHome({ userId, initialWorkspaces, projects }: Workspac
       );
       return;
     }
-    if (!window.confirm(`Delete the empty workspace "${w.name}"?`)) return;
+    const ok = await dialogs.confirm({
+      title: `Delete the empty workspace "${w.name}"?`,
+      confirmLabel: 'Delete workspace',
+      danger: true,
+    });
+    if (!ok) return;
     setWorkspaces((prev) => prev.filter((x) => x.id !== w.id));
     try {
       await deleteWorkspace(supabase, w.id);
@@ -113,6 +128,7 @@ export function WorkspacesHome({ userId, initialWorkspaces, projects }: Workspac
 
   return (
     <div className="min-h-screen bg-canvas font-sans text-ink">
+      {dialogs.dialog}
       <div className="flex h-[60px] items-center gap-[11px] border-b border-line bg-surface px-[22px]">
         <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-[14px] font-bold text-canvas">
           S
