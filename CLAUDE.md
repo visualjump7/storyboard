@@ -53,7 +53,19 @@ npm run sb -- add --name "Opening" --prompt "wide drone shot at dawn" --image ./
 npm run sb -- set 2 --prompt "tighter framing, golden hour"
 npm run sb -- image 2 https://example.com/generated.png   # local path OR url
 npm run sb -- rm 3
+npm run sb -- animate 2 --duration 8              # still → video clip (local H3)
 ```
+
+`animate` renders the scene's hero still into a video clip (with generated
+audio) using **MiniMax H3 image-to-video on the local ComfyUI** and attaches
+the MP4 to the scene as media. Comfy Desktop must be running with the H3
+models (default `http://127.0.0.1:8000`; override `STORYBOARD_COMFY_URL` in
+`.env.local`). The motion prompt defaults to the scene's `prompt` — pass
+`--prompt` for a dedicated motion prompt. Flags: `--duration` s (1–12, default
+5), `--mp` (default 0.7), `--turbo` (8-step LoRA draft mode vs 20 steps),
+`--seed`, `--steps`, `--timeout` min (default 30). It legitimately takes
+~1 min of render per second of clip at 0.7 MP — the command polls and prints
+progress until done.
 
 Social pipelines:
 

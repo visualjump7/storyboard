@@ -1,6 +1,6 @@
 ---
 name: storyboard
-description: Push projects, scenes, social posts, merchandise items, prompts, media, and schedules into the cloud storyboard/pipeline app (the Supabase-backed Next.js board in this repo). Use whenever the user wants to add, update, reorder, or remove a storyboard scene, a social post, OR a merchandise item, create/switch/rename/delete a project (storyboard, social pipeline, or merchandise board), set a generation prompt or post copy, attach or replace scene images or post media (images/video), set a posting schedule/status/platforms, research and fill in a product's supplier/cost/sale price/development time, get the read-only share link, or read back the current board — e.g. "add this to the storyboard", "new project for the tornado film", "add this to the social pipeline", "schedule that post for Friday", "mark post 2 ready", "find me a manufacturer for this plushie and fill in the costs", "what would we sell this for", "what's in the pipeline", "give me the share link". Also use after generating or downloading an image/video the user wants saved as a scene, post, or product shot.
+description: Push projects, scenes, social posts, merchandise items, prompts, media, and schedules into the cloud storyboard/pipeline app (the Supabase-backed Next.js board in this repo). Use whenever the user wants to add, update, reorder, or remove a storyboard scene, a social post, OR a merchandise item, create/switch/rename/delete a project (storyboard, social pipeline, or merchandise board), set a generation prompt or post copy, attach or replace scene images or post media (images/video), set a posting schedule/status/platforms, research and fill in a product's supplier/cost/sale price/development time, get the read-only share link, animate a storyboard scene's still into a video clip (local MiniMax H3 image-to-video via ComfyUI), or read back the current board — e.g. "add this to the storyboard", "new project for the tornado film", "add this to the social pipeline", "schedule that post for Friday", "mark post 2 ready", "find me a manufacturer for this plushie and fill in the costs", "what would we sell this for", "what's in the pipeline", "give me the share link", "animate scene 2". Also use after generating or downloading an image/video the user wants saved as a scene, post, or product shot.
 ---
 
 # Storyboard + Social Pipeline
@@ -131,6 +131,7 @@ Storyboard scenes:
 | Add a scene | `npm run sb -- add --name "Opening" --prompt "wide drone shot" --image ./shot.png` |
 | Update prompt/name/desc | `npm run sb -- set 2 --prompt "tighter framing"` |
 | Attach/replace the image | `npm run sb -- image 2 ./new.png` (path **or** http(s) URL) |
+| Animate the still into a clip | `npm run sb -- animate 2 --duration 8` (see below) |
 | Delete a scene | `npm run sb -- rm 3` |
 
 Social posts:
@@ -147,6 +148,33 @@ Social posts:
 
 `<project>` is an index from `projects`, a name, a UUID, or an id prefix.
 `<scene>`/`<post>` is a 1-based index from `list`, a full UUID, or an id prefix.
+
+## Animating scenes (image → video)
+
+`animate <scene>` renders a storyboard scene's hero still into a video clip
+with **MiniMax H3 image-to-video on the local ComfyUI** (Comfy Desktop must be
+running with the H3 models installed; default `http://127.0.0.1:8000`, override
+with `STORYBOARD_COMFY_URL`). The finished MP4 — with generated audio — is
+attached to the scene as media automatically, so it shows on the board and the
+share page.
+
+```
+npm run sb -- animate 2                          # scene still + scene prompt, 5s @ 0.7 MP
+npm run sb -- animate 2 --prompt "slow push-in as she turns" --duration 8
+npm run sb -- animate 2 --turbo                  # 8-step turbo LoRA (fast draft)
+```
+
+- The scene needs a still (`image_path`) — the clip's first frame. The motion
+  prompt defaults to the scene's `prompt`; pass `--prompt` for a dedicated
+  motion prompt (better: describe motion + camera + audio, not image style).
+- Flags: `--duration` seconds (1–12, default 5), `--mp` megapixels (default
+  0.7 — the value tier), `--turbo` (8 steps vs 20), `--seed`, `--steps`,
+  `--timeout` minutes (default 30).
+- It's slow by nature: **budget ~1 min of render per second of clip** at
+  0.7 MP (less with `--turbo`). The command polls and reports progress; that's
+  normal, don't kill it.
+- Output aspect follows the still's aspect (fitted to the MP budget, multiples
+  of 32).
 
 ## Working with media
 

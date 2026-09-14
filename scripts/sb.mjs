@@ -41,6 +41,10 @@
 //   rm <scene>                            Delete a scene/post and its stored media
 //   script get                            Print the script/notes text
 //   script set <PATH|->                   Replace the script/notes text (- reads stdin)
+//   animate <scene> [--prompt P] [--duration S] [--mp N] [--turbo] [--seed N]
+//                                         Render the scene's still into a video clip
+//                                         (image-to-video on local ComfyUI / MiniMax
+//                                         H3) and attach it to the scene as media
 //   help                                  Show this help
 //
 // <project> = 1-based index from `projects`, a name, a full UUID, or an id prefix.
@@ -1441,6 +1445,303 @@ async function cmdScript(positional, flags) {
   throw new Error('Usage: sb script get | sb script set <path|->');
 }
 
+// ---------------------------------------------------------------------------
+// Animate (image-to-video on local ComfyUI / MiniMax H3)
+// ---------------------------------------------------------------------------
+
+// Model files the workflow expects inside the ComfyUI models directory. These
+// match the Comfy-Org/MiniMax-H3 release names; ComfyUI errors clearly if one
+// is missing, and cmdAnimate turns that into install guidance.
+const H3_DIFFUSION = 'minimax_h3_fl2va_pruned_int8_convrot.safetensors';
+const H3_TEXT_ENCODER = 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors';
+const H3_VIDEO_VAE = 'minimax_h3_video_vae_fp16.safetensors';
+const H3_AUDIO_VAE = 'minimax_h3_audio_vae_fp32.safetensors';
+const H3_TURBO_LORA = 'minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors';
+const H3_FPS = 24;
+
+function comfyUrl() {
+  return (process.env.STORYBOARD_COMFY_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+}
+
+async function comfyFetch(path, init) {
+  let res;
+  try {
+    res = await fetch(`${comfyUrl()}${path}`, init);
+  } catch {
+    throw new Error(
+      `ComfyUI isn't reachable at ${comfyUrl()}. Start the Comfy Desktop app ` +
+        '(or point STORYBOARD_COMFY_URL at the machine that runs it).',
+    );
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`ComfyUI ${path} failed (${res.status}): ${truncate(body, 300)}`);
+  }
+  return res;
+}
+
+/** Minimal width/height sniffing for png/jpeg/webp scene stills. */
+function imageDims(buf) {
+  if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50) {
+    // PNG: IHDR is always the first chunk.
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+  if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    // JPEG: walk markers until a start-of-frame.
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i++; continue; }
+      const marker = buf[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) };
+      }
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+    return null;
+  }
+  if (buf.length > 30 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    const fmt = buf.toString('ascii', 12, 16);
+    if (fmt === 'VP8X') {
+      return { width: 1 + buf.readUIntLE(24, 3), height: 1 + buf.readUIntLE(27, 3) };
+    }
+    if (fmt === 'VP8 ') {
+      return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+    }
+    return null;
+  }
+  return null;
+}
+
+/** Fit the still's aspect ratio into a megapixel budget, in multiples of 32. */
+function h3Dims(srcW, srcH, megapixels) {
+  const ar = srcW / srcH;
+  const to32 = (v) => Math.max(32, Math.round(v / 32) * 32);
+  return {
+    width: to32(Math.sqrt(megapixels * 1e6 * ar)),
+    height: to32(Math.sqrt((megapixels * 1e6) / ar)),
+  };
+}
+
+/** H3 latents come in 17-frame chunks anchored at 5 — same math as the template. */
+function h3Frames(seconds) {
+  const base = Math.max(5, Math.round(seconds * H3_FPS));
+  return base + ((5 - (base % 17)) % 17);
+}
+
+function parseNumberFlag(value, flag, { min, max, integer = false } = {}) {
+  const n = Number(String(value).trim());
+  const bad =
+    !Number.isFinite(n) || (integer && !Number.isInteger(n)) || n < min || n > max;
+  if (bad) {
+    throw new Error(
+      `Invalid ${flag} "${value}" — expected ${integer ? 'an integer' : 'a number'} between ${min} and ${max}.`,
+    );
+  }
+  return n;
+}
+
+/**
+ * The API graph mirrors the stock MiniMax H3 i2v template, with the frontend
+ * conveniences (resolution selector, turbo switch, frame math) resolved to
+ * plain values here so the submitted graph is just the model chain.
+ */
+function buildH3Graph({ prompt, width, height, frames, steps, seed, turbo, imageName }) {
+  const model = turbo ? ['2', 0] : ['1', 0];
+  const graph = {
+    1: { class_type: 'UNETLoader', inputs: { unet_name: H3_DIFFUSION, weight_dtype: 'default' } },
+    3: { class_type: 'CLIPLoader', inputs: { clip_name: H3_TEXT_ENCODER, type: 'minimax', device: 'default' } },
+    4: { class_type: 'VAELoader', inputs: { vae_name: H3_VIDEO_VAE } },
+    5: { class_type: 'VAELoader', inputs: { vae_name: H3_AUDIO_VAE } },
+    6: { class_type: 'LoadImage', inputs: { image: imageName } },
+    7: {
+      class_type: 'MiniMaxH3ImageToVideo',
+      inputs: {
+        prompt,
+        width,
+        height,
+        length: frames,
+        clip: ['3', 0],
+        vae: ['4', 0],
+        first_frame: ['6', 0],
+      },
+    },
+    8: { class_type: 'BasicGuider', inputs: { model, conditioning: ['7', 0] } },
+    9: { class_type: 'KSamplerSelect', inputs: { sampler_name: 'res_multistep' } },
+    10: { class_type: 'BasicScheduler', inputs: { scheduler: 'simple', steps, denoise: 1.0, model } },
+    11: { class_type: 'RandomNoise', inputs: { noise_seed: seed } },
+    12: {
+      class_type: 'SamplerCustomAdvanced',
+      inputs: {
+        noise: ['11', 0],
+        guider: ['8', 0],
+        sampler: ['9', 0],
+        sigmas: ['10', 0],
+        latent_image: ['7', 1],
+      },
+    },
+    13: { class_type: 'VAEDecode', inputs: { samples: ['12', 0], vae: ['4', 0] } },
+    14: { class_type: 'VAEDecodeAudio', inputs: { samples: ['12', 0], vae: ['5', 0] } },
+    15: {
+      class_type: 'CreateVideo',
+      inputs: { fps: H3_FPS, bit_depth: 8, color_space: 'sRGB', images: ['13', 0], audio: ['14', 0] },
+    },
+    16: {
+      class_type: 'SaveVideo',
+      inputs: { filename_prefix: 'video/sb_animate', format: 'auto', codec: 'auto', video: ['15', 0] },
+    },
+  };
+  if (turbo) {
+    graph[2] = {
+      class_type: 'LoraLoaderModelOnly',
+      inputs: { lora_name: H3_TURBO_LORA, strength_model: 1.0, model: ['1', 0] },
+    };
+  }
+  return graph;
+}
+
+async function cmdAnimate(positional, flags) {
+  const uid = await ownerId();
+  const project = await resolveActiveProject(flags);
+  announce(project);
+  assertStoryboard(project, 'the animate command');
+  const scene = await resolveScene(project.id, positional[0]);
+
+  if (!scene.image_path) {
+    throw new Error(
+      `Scene ${scene.id.slice(0, 8)} has no still to animate. Set one first: ` +
+        `sb image ${positional[0]} <path|url>`,
+    );
+  }
+  const prompt = typeof flags.prompt === 'string' ? flags.prompt : (scene.prompt || '').trim();
+  if (!prompt) {
+    throw new Error(
+      'No motion prompt. Pass --prompt "…" or set one on the scene: ' +
+        `sb set ${positional[0]} --prompt "…"`,
+    );
+  }
+
+  const duration = typeof flags.duration === 'string'
+    ? parseNumberFlag(flags.duration, '--duration', { min: 1, max: 12 })
+    : 5;
+  const megapixels = typeof flags.mp === 'string'
+    ? parseNumberFlag(flags.mp, '--mp', { min: 0.1, max: 1.1 })
+    : 0.7;
+  const turbo = flags.turbo === true;
+  const steps = typeof flags.steps === 'string'
+    ? parseNumberFlag(flags.steps, '--steps', { min: 1, max: 50, integer: true })
+    : turbo ? 8 : 20;
+  const seed = typeof flags.seed === 'string'
+    ? parseNumberFlag(flags.seed, '--seed', { min: 0, max: Number.MAX_SAFE_INTEGER, integer: true })
+    : Math.floor(Math.random() * 2 ** 48);
+  const timeoutMin = typeof flags.timeout === 'string'
+    ? parseNumberFlag(flags.timeout, '--timeout', { min: 1, max: 240 })
+    : 30;
+
+  // 1. Pull the scene's still out of Supabase Storage.
+  const { data: blob, error: dlErr } = await db().storage.from(BUCKET).download(scene.image_path);
+  if (dlErr) throw dlErr;
+  const still = Buffer.from(await blob.arrayBuffer());
+
+  const dims = imageDims(still);
+  if (!dims) {
+    console.error('note: could not read the still’s dimensions — assuming 16:9.');
+  }
+  const { width, height } = h3Dims(dims?.width ?? 16, dims?.height ?? 9, megapixels);
+  const frames = h3Frames(duration);
+
+  // 2. Hand the still to ComfyUI as a workflow input.
+  const ext = extname(scene.image_path).slice(1) || 'png';
+  const form = new FormData();
+  form.append('image', new Blob([still]), `sb-${scene.id.slice(0, 8)}.${ext}`);
+  form.append('type', 'input');
+  form.append('overwrite', 'true');
+  const uploaded = await (await comfyFetch('/upload/image', { method: 'POST', body: form })).json();
+  const imageName = uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name;
+
+  // 3. Queue the generation.
+  const graph = buildH3Graph({ prompt, width, height, frames, steps, seed, turbo, imageName });
+  const queued = await (
+    await comfyFetch('/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: graph, client_id: 'sb-cli' }),
+    })
+  ).json();
+  if (!queued.prompt_id) {
+    throw new Error(`ComfyUI rejected the workflow: ${truncate(JSON.stringify(queued), 400)}`);
+  }
+  const promptId = queued.prompt_id;
+  console.error(
+    `animate: queued ${promptId.slice(0, 8)} — ${width}x${height}, ${(frames / H3_FPS).toFixed(1)}s, ` +
+      `${steps} steps${turbo ? ' (turbo)' : ''}, seed ${seed}`,
+  );
+
+  // 4. Poll until the clip exists (H3 runs minutes-long; keep the user posted).
+  const started = Date.now();
+  let entry = null;
+  let lastNote = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const hist = await (await comfyFetch(`/history/${promptId}`)).json();
+    entry = hist[promptId];
+    const status = entry?.status?.status_str;
+    if (status === 'success') break;
+    if (status === 'error') {
+      const detail = (entry.status.messages ?? [])
+        .filter((m) => m[0] === 'execution_error')
+        .map((m) => `${m[1]?.node_type}: ${m[1]?.exception_message}`)
+        .join('; ');
+      const missingModel = /not in|does not exist|invalid.*(unet|clip|lora|vae)_name/i.test(detail);
+      throw new Error(
+        `Generation failed: ${truncate(detail || 'unknown error', 400)}` +
+          (missingModel
+            ? '\nA model file looks missing — the workflow expects the MiniMax H3 ' +
+              'release files (diffusion, text encoder, both VAEs) in the ComfyUI models directory.'
+            : ''),
+      );
+    }
+    const elapsed = Date.now() - started;
+    if (elapsed > timeoutMin * 60_000) {
+      throw new Error(
+        `Timed out after ${timeoutMin} min. ComfyUI may still be rendering ${promptId.slice(0, 8)} — ` +
+          'check the app; re-run with a larger --timeout for long clips.',
+      );
+    }
+    if (Date.now() - lastNote >= 30_000) {
+      console.error(`animate: rendering… ${(elapsed / 60_000).toFixed(1)} min elapsed`);
+      lastNote = Date.now();
+    }
+  }
+  const minutes = ((Date.now() - started) / 60_000).toFixed(1);
+
+  // 5. Fetch the MP4 and attach it to the scene like any other media upload.
+  const out = Object.values(entry.outputs ?? {})
+    .flatMap((o) => [...(o.images ?? []), ...(o.videos ?? [])])
+    .find((f) => f.filename?.endsWith('.mp4'));
+  if (!out) throw new Error('Generation finished but produced no MP4 — check the ComfyUI app.');
+  const view = await comfyFetch(
+    `/view?filename=${encodeURIComponent(out.filename)}` +
+      `&subfolder=${encodeURIComponent(out.subfolder ?? '')}&type=${out.type ?? 'output'}`,
+  );
+  const clip = Buffer.from(await view.arrayBuffer());
+
+  const clipPath = `${uid}/${scene.id}/${randomUUID()}.mp4`;
+  const { error: upErr } = await db()
+    .storage.from(BUCKET)
+    .upload(clipPath, clip, { contentType: 'video/mp4', upsert: false });
+  if (upErr) throw upErr;
+  const existing = await fetchSceneMediaRows(scene.id);
+  const position = existing.length ? Math.max(...existing.map((m) => m.position)) + 1 : 0;
+  await insertMediaRow(uid, scene.id, { path: clipPath, kind: 'video' }, position);
+
+  console.log(`Animated scene ${scene.id.slice(0, 8)}${scene.name ? ` (${scene.name})` : ''} ✓`);
+  console.log(
+    `  clip: ${(frames / H3_FPS).toFixed(1)}s · ${width}x${height} · ${steps} steps` +
+      `${turbo ? ' (turbo)' : ''} · seed ${seed} · ${minutes} min · ${(clip.length / 1e6).toFixed(1)} MB`,
+  );
+  console.log(`  attached as media #${position + 1} — it's on the board and the share page now.`);
+}
+
 function printHelp() {
   console.log(
     [
@@ -1481,6 +1782,11 @@ function printHelp() {
       '  rm <scene>                             Delete a scene/post + its media',
       '  script get                             Print script/notes text',
       '  script set <PATH|->                    Replace script/notes text',
+      '  animate <scene> [--prompt P] [--duration S] [--mp N] [--turbo]',
+      '      [--seed N] [--steps N] [--timeout MIN]',
+      '                                         Render the scene still into a video',
+      '                                         clip (local ComfyUI / MiniMax H3) and',
+      '                                         attach it to the scene as media',
       '',
       '<project> = index from `projects`, a name, a full UUID, or an id prefix.',
       '<scene>/<post> = 1-based index from `list`, a full UUID, or an id prefix.',
@@ -1494,6 +1800,10 @@ function printHelp() {
       '--schedule is local time; "none" clears it (same for --platforms).',
       'Platform aliases normalize (twitter→x, ig→instagram, …); unknowns warn.',
       'Videos: prefer .mp4 (H.264) ≤50MB (Supabase per-file cap; raiseable).',
+      'animate needs ComfyUI running with the MiniMax H3 models (default',
+      'http://127.0.0.1:8000; override with STORYBOARD_COMFY_URL). Defaults:',
+      '5s · 0.7 MP · 20 steps; --turbo uses the 8-step LoRA. Budget ~1 min of',
+      'render per second of clip at 0.7 MP.',
     ].join('\n'),
   );
 }
@@ -1542,6 +1852,8 @@ async function main() {
       return cmdRm(positional, flags);
     case 'script':
       return cmdScript(positional, flags);
+    case 'animate':
+      return cmdAnimate(positional, flags);
     default:
       console.error(`Unknown command: ${command}\n`);
       printHelp();
